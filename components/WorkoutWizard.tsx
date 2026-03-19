@@ -1,0 +1,500 @@
+'use client';
+
+import { useState } from 'react';
+import { parseWorkoutFromText } from '@/lib/parse-workout';
+import { AddToIntervalsButton } from '@/components/ai/AddToIntervalsButton';
+import type { WorkoutEvent } from '@/lib/types';
+
+type AthleteSlug = 'mathias' | 'karoline';
+type Step = 'action' | 'variant' | 'athlete' | 'sport' | 'result';
+
+export interface SuccessBanner {
+  label: string;
+  url: string;
+  color: string;
+}
+
+export interface WorkoutPreview {
+  workout: WorkoutEvent;
+  athleteSlug: AthleteSlug;
+}
+
+const ATHLETES = [
+  { slug: 'mathias' as AthleteSlug, label: 'Mathias', color: '#16a34a' },
+  { slug: 'karoline' as AthleteSlug, label: 'Karoline', color: '#2563eb' },
+];
+
+const ACTIONS = [
+  {
+    id: 'extra',
+    label: 'Ekstraøkt',
+    icon: '⚡',
+    description: 'AI foreslår en økt basert på dagsform',
+  },
+  {
+    id: 'sick',
+    label: 'Syk dag',
+    icon: '🤒',
+    description: 'Fjern planlagte økter for i dag',
+  },
+] as const;
+
+const EXTRA_VARIANTS = [
+  {
+    id: 'extra_today',
+    label: 'Legg til i dag',
+    icon: '📅',
+    description: 'Lett økt som passer dagsform',
+  },
+  {
+    id: 'extra_load',
+    label: 'Øk ukebelastning',
+    icon: '📈',
+    description: 'Ekstra stimulus uten å overbelaste',
+  },
+] as const;
+
+const SPORTS = [
+  { id: 'Run', label: 'Løp', icon: '🏃' },
+  { id: 'Ride', label: 'Sykkel', icon: '🚴' },
+  { id: 'Swim', label: 'Svøm', icon: '🏊' },
+  { id: 'WeightTraining', label: 'Styrke', icon: '🏋️' },
+  { id: 'NordicSki', label: 'Ski', icon: '⛷️' },
+  { id: 'Rowing', label: 'Roing', icon: '🚣' },
+];
+
+// ─── Small UI ────────────────────────────────────────────────────────────────
+
+function Breadcrumb({ parts }: { parts: string[] }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-5 flex-wrap">
+      {parts.map((p, i) => (
+        <span key={i} className="flex items-center gap-1.5">
+          {i > 0 && <span style={{ color: 'var(--border)', fontSize: '12px' }}>›</span>}
+          <span
+            className="text-xs font-medium px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: 'var(--bg)', color: 'var(--text-subtle)' }}
+          >
+            {p}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-xs font-medium mb-3 uppercase tracking-wide" style={{ color: 'var(--text-subtle)' }}>
+      {children}
+    </p>
+  );
+}
+
+interface ActionCardProps {
+  icon: string;
+  label: string;
+  description?: string;
+  color?: string;
+  onClick: () => void;
+}
+
+function ActionCard({ icon, label, description, color, onClick }: ActionCardProps) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-start gap-3 px-4 py-3 rounded-2xl text-left transition-all w-full group"
+      style={{
+        backgroundColor: 'var(--bg)',
+        border: '1px solid var(--border)',
+      }}
+    >
+      <span className="text-xl mt-0.5 leading-none">{icon}</span>
+      <div>
+        <div className="text-sm font-semibold" style={{ color: color ?? 'var(--text)' }}>
+          {label}
+        </div>
+        {description && (
+          <div className="text-xs mt-0.5" style={{ color: 'var(--text-subtle)' }}>
+            {description}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-xs mb-5 flex items-center gap-1 transition-opacity opacity-60 hover:opacity-100"
+      style={{ color: 'var(--text)' }}
+    >
+      ← Tilbake
+    </button>
+  );
+}
+
+function Spinner({ color }: { color: string }) {
+  return (
+    <div className="flex items-center gap-3 py-8">
+      <div
+        className="w-5 h-5 rounded-full border-2 animate-spin flex-shrink-0"
+        style={{ borderColor: `${color}30`, borderTopColor: color }}
+      />
+      <span className="text-sm" style={{ color: 'var(--text-subtle)' }}>
+        AI genererer økt…
+      </span>
+    </div>
+  );
+}
+
+// ─── Result card ─────────────────────────────────────────────────────────────
+
+interface ResultCardProps {
+  workout: WorkoutEvent;
+  athleteColor: string;
+  athleteSlug: AthleteSlug;
+  displayText: string;
+  onAdded: (url: string) => void;
+  onReset: () => void;
+}
+
+function ResultCard({ workout, athleteColor, athleteSlug, displayText, onAdded, onReset }: ResultCardProps) {
+  const sportLabels: Record<string, string> = {
+    Run: 'Løp', Ride: 'Sykkel', Swim: 'Svøm',
+    WeightTraining: 'Styrke', NordicSki: 'Ski', Rowing: 'Roing',
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* AI commentary */}
+      <p className="text-sm leading-relaxed" style={{ color: 'var(--text-subtle)' }}>
+        {displayText}
+      </p>
+
+      {/* Workout card */}
+      <div
+        className="rounded-2xl overflow-hidden"
+        style={{ border: `1px solid ${athleteColor}30` }}
+      >
+        {/* Header bar */}
+        <div
+          className="px-4 py-3 flex items-center justify-between gap-2"
+          style={{ backgroundColor: `${athleteColor}12` }}
+        >
+          <div>
+            <div className="font-semibold text-sm" style={{ color: 'var(--text)' }}>
+              {workout.name}
+            </div>
+            <div className="flex items-center gap-3 mt-0.5">
+              <span
+                className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                style={{ backgroundColor: `${athleteColor}20`, color: athleteColor }}
+              >
+                {sportLabels[workout.type] ?? workout.type}
+              </span>
+              <span className="text-xs" style={{ color: 'var(--text-subtle)' }}>
+                {workout.start_date_local.slice(0, 10)}
+              </span>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            {workout.moving_time && (
+              <div className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                {Math.round(workout.moving_time / 60)} min
+              </div>
+            )}
+            {workout.icu_training_load && (
+              <div className="text-xs" style={{ color: 'var(--text-subtle)' }}>
+                {workout.icu_training_load} TSS
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Description */}
+        {workout.description && (
+          <div
+            className="px-4 py-3 border-t"
+            style={{ borderColor: `${athleteColor}20` }}
+          >
+            <pre
+              className="text-xs leading-relaxed whitespace-pre-wrap font-mono"
+              style={{ color: 'var(--text-subtle)' }}
+            >
+              {workout.description}
+            </pre>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div
+          className="px-4 py-3 flex items-center gap-4 border-t"
+          style={{ borderColor: `${athleteColor}20`, backgroundColor: `${athleteColor}06` }}
+        >
+          <AddToIntervalsButton
+            workout={workout}
+            athleteSlug={athleteSlug}
+            color={athleteColor}
+            onAdded={onAdded}
+          />
+          <button
+            onClick={onReset}
+            className="text-xs transition-opacity opacity-50 hover:opacity-100"
+            style={{ color: 'var(--text)' }}
+          >
+            Avbryt
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Wizard ──────────────────────────────────────────────────────────────────
+
+interface Props {
+  onSuccess: (banner: SuccessBanner) => void;
+  onPreview: (preview: WorkoutPreview | null) => void;
+}
+
+export function WorkoutWizard({ onSuccess, onPreview }: Props) {
+  const [step, setStep] = useState<Step>('action');
+  const [action, setAction] = useState<string | null>(null);
+  const [actionLabel, setActionLabel] = useState<string | null>(null);
+  const [variantLabel, setVariantLabel] = useState<string | null>(null);
+  const [athleteSlug, setAthleteSlug] = useState<AthleteSlug | null>(null);
+  const [sportLabel, setSportLabel] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sickLoading, setSickLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const athleteColor = athleteSlug === 'mathias' ? '#16a34a' : '#2563eb';
+
+  function reset() {
+    setStep('action');
+    setAction(null);
+    setActionLabel(null);
+    setVariantLabel(null);
+    setAthleteSlug(null);
+    setSportLabel(null);
+    setAiResult(null);
+    setError(null);
+    onPreview(null);
+  }
+
+  function pickAction(id: string, label: string) {
+    setAction(id);
+    setActionLabel(label);
+    setStep(id === 'extra' ? 'variant' : 'athlete');
+  }
+
+  function pickVariant(variantId: string, label: string) {
+    setAction(variantId);
+    setVariantLabel(label);
+    setStep('athlete');
+  }
+
+  function pickAthlete(slug: AthleteSlug) {
+    setAthleteSlug(slug);
+    if (action === 'sick') {
+      handleSickDay(slug);
+    } else {
+      setStep('sport');
+    }
+  }
+
+  function pickSport(sportId: string, label: string) {
+    setSportLabel(label);
+    setStep('result');
+    fetchAI(athleteSlug!, action!, sportId);
+  }
+
+  async function fetchAI(slug: AthleteSlug, actionId: string, sport: string) {
+    setLoading(true);
+    setError(null);
+    setAiResult(null);
+    onPreview(null);
+    try {
+      const res = await fetch('/api/quickactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ athleteSlug: slug, action: actionId, sport }),
+      });
+      if (!res.ok) throw new Error('Feil fra server');
+      const data = await res.json();
+      setAiResult(data.text);
+      const parsed = parseWorkoutFromText(data.text);
+      if (parsed) onPreview({ workout: parsed, athleteSlug: slug });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ukjent feil');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSickDay(slug: AthleteSlug) {
+    setSickLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/events', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ athleteSlug: slug, sickDay: true }),
+      });
+      if (!res.ok) throw new Error('Feil fra server');
+      const data = await res.json();
+      const color = slug === 'mathias' ? '#16a34a' : '#2563eb';
+      const athleteId = slug === 'mathias' ? 'i303639' : 'i456432';
+      const todayStr = new Date().toISOString().slice(0, 10);
+      onSuccess({
+        label: `${data.deleted} økt${data.deleted !== 1 ? 'er' : ''} fjernet for i dag`,
+        url: `https://intervals.icu/athlete/${athleteId}/activities?w=${todayStr}`,
+        color,
+      });
+      reset();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ukjent feil');
+      setStep('action');
+    } finally {
+      setSickLoading(false);
+    }
+  }
+
+  const workout = aiResult ? parseWorkoutFromText(aiResult) : null;
+  const displayText = aiResult?.replace(/```json[\s\S]*?```/g, '').trim() ?? null;
+
+  // Breadcrumb parts
+  const breadcrumb: string[] = [];
+  if (actionLabel) breadcrumb.push(actionLabel);
+  if (variantLabel) breadcrumb.push(variantLabel);
+  if (athleteSlug) breadcrumb.push(athleteSlug === 'mathias' ? 'Mathias' : 'Karoline');
+  if (sportLabel) breadcrumb.push(sportLabel);
+
+  return (
+    <div>
+      {/* Step: velg handling */}
+      {step === 'action' && (
+        <div className="space-y-2">
+          <SectionLabel>Hurtighandling</SectionLabel>
+          {ACTIONS.map((a) => (
+            <ActionCard
+              key={a.id}
+              icon={a.icon}
+              label={a.label}
+              description={a.description}
+              onClick={() => pickAction(a.id, a.label)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Step: variant (ekstraøkt) */}
+      {step === 'variant' && (
+        <div>
+          <BackButton onClick={() => setStep('action')} />
+          <Breadcrumb parts={breadcrumb} />
+          <SectionLabel>Type ekstraøkt</SectionLabel>
+          <div className="space-y-2">
+            {EXTRA_VARIANTS.map((v) => (
+              <ActionCard
+                key={v.id}
+                icon={v.icon}
+                label={v.label}
+                description={v.description}
+                onClick={() => pickVariant(v.id, v.label)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Step: velg atlet */}
+      {step === 'athlete' && (
+        <div>
+          <BackButton onClick={() => setStep(action === 'sick' ? 'action' : 'variant')} />
+          <Breadcrumb parts={breadcrumb} />
+          <SectionLabel>Hvem trener?</SectionLabel>
+          {sickLoading ? (
+            <div className="flex items-center gap-3 py-6">
+              <div className="w-5 h-5 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--text)' }} />
+              <span className="text-sm" style={{ color: 'var(--text-subtle)' }}>Fjerner økter…</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {ATHLETES.map((a) => (
+                <ActionCard
+                  key={a.slug}
+                  icon={a.slug === 'mathias' ? '🟢' : '🔵'}
+                  label={a.label}
+                  color={a.color}
+                  onClick={() => pickAthlete(a.slug)}
+                />
+              ))}
+            </div>
+          )}
+          {error && <p className="mt-3 text-sm" style={{ color: '#dc2626' }}>{error}</p>}
+        </div>
+      )}
+
+      {/* Step: velg sport */}
+      {step === 'sport' && (
+        <div>
+          <BackButton onClick={() => setStep('athlete')} />
+          <Breadcrumb parts={breadcrumb} />
+          <SectionLabel>Velg sport</SectionLabel>
+          <div className="grid grid-cols-3 gap-2">
+            {SPORTS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => pickSport(s.id, s.label)}
+                className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-2xl transition-all"
+                style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}
+              >
+                <span className="text-xl leading-none">{s.icon}</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--text)' }}>{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Step: resultat */}
+      {step === 'result' && (
+        <div>
+          <BackButton onClick={() => { onPreview(null); setStep('sport'); }} />
+          <Breadcrumb parts={breadcrumb} />
+
+          {loading && <Spinner color={athleteColor} />}
+          {error && <p className="text-sm" style={{ color: '#dc2626' }}>{error}</p>}
+
+          {workout && displayText && !loading && (
+            <ResultCard
+              workout={workout}
+              athleteColor={athleteColor}
+              athleteSlug={athleteSlug!}
+              displayText={displayText}
+              onAdded={(url) => {
+                onSuccess({ label: `${workout.name} lagt til`, url, color: athleteColor });
+                reset();
+              }}
+              onReset={reset}
+            />
+          )}
+
+          {!workout && displayText && !loading && (
+            <div className="space-y-4">
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text)' }}>{displayText}</p>
+              <button onClick={reset} className="text-xs opacity-50 hover:opacity-100" style={{ color: 'var(--text)' }}>
+                Start på nytt
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
