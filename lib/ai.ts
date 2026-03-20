@@ -77,7 +77,22 @@ JSON-format (description er workout-builder-tekst):
 \`\`\`
 
 Gyldige sport-typer: Run, Ride, Swim, WeightTraining, NordicSki, Rowing.
-Hold tekstsvaret kort (2-3 setninger). Øktdetaljene ligger i JSON-blokken.`;
+Hold tekstsvaret kort (2-3 setninger). Øktdetaljene ligger i JSON-blokken.
+
+## Styrkeøkter (WeightTraining)
+Styrkeøkter for triatleter bruker IKKE workout-builder-syntaks i description. Feltet "description" skal være fritekst med øvelsesliste.
+Øvelsene MÅ støtte løping, sykling og svømming. Fokus på:
+- Hofteekstensjon og kjernemuskulatur (glutes, hamstrings, core)
+- Skulderstabilitet og trekk (relevant for svømming)
+- Single-leg-bevegelser (relevant for løp og sykkel)
+- Unngå isolasjonsøvelser som bicep curls, leg extensions o.l.
+
+Eksempel styrkeøkt for triatlet:
+\`\`\`json
+{"workout_suggestion":true,"start_date_local":"${tomorrowIso}T07:00:00","type":"WeightTraining","name":"Styrke: Funksjonell (triatlon)","moving_time":2700,"icu_training_load":40,"description":"3 runder, 60 sek hvile mellom øvelser\\n\\n- Rumensk markløft: 3x10\\n- Bulgarsk splittknebøy: 3x8 per ben\\n- Planke med rotasjon: 3x10\\n- Banded pull-apart: 3x15\\n- Hip thrust: 3x12\\n- Pallof press: 3x10 per side"}
+\`\`\`
+
+Navn for styrkeøkter: "Styrke: Funksjonell (triatlon)", "Styrke: Overkropp/Skulder", "Styrke: Ben og hofte", "Styrke: Core og stabilitet".`;
 }
 
 export function buildContext(

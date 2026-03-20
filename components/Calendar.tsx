@@ -142,15 +142,24 @@ function getChips(
 
 // ─── Tooltip portal ───────────────────────────────────────────────────────────
 
-const TOOLTIP_WIDTH = 224;
+const TOOLTIP_WIDTH = 240;
+
+interface SavePayload { name: string; date: string; durationMin: number | null; tss: number | null; }
 
 // anchorY = top edge of chip (pixels from top of document) — popup renders above chip
-function TooltipPortal({ detail, color, anchorX, anchorY, canEdit, onMouseEnter, onMouseLeave, onDelete, deleting }: {
-  detail: ChipDetail; color: string; anchorX: number; anchorY: number;
+function TooltipPortal({ detail, eventDate, color, anchorX, anchorY, canEdit, onMouseEnter, onMouseLeave, onDelete, onSave, deleting }: {
+  detail: ChipDetail; eventDate: string; color: string; anchorX: number; anchorY: number;
   canEdit: boolean;
   onMouseEnter: () => void; onMouseLeave: () => void;
-  onDelete: () => void; deleting: boolean;
+  onDelete: () => void; onSave: (p: SavePayload) => void; deleting: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(detail.name);
+  const [editDate, setEditDate] = useState(eventDate);
+  const [editDur, setEditDur] = useState(detail.duration ? String(Math.round(detail.duration / 60)) : '');
+  const [editTss, setEditTss] = useState(detail.tss ? String(detail.tss) : '');
+  const [saving, setSaving] = useState(false);
+
   const rows: { label: string; value: string }[] = [];
   if (detail.duration) rows.push({ label: 'Varighet', value: formatDuration(detail.duration) });
   if (detail.distance) rows.push({ label: 'Distanse', value: formatDist(detail.distance) });
@@ -161,6 +170,24 @@ function TooltipPortal({ detail, color, anchorX, anchorY, canEdit, onMouseEnter,
   if (detail.intensity) rows.push({ label: 'Intensitet', value: `${Math.round(detail.intensity * 100)}%` });
 
   const left = Math.max(8, Math.min(anchorX - TOOLTIP_WIDTH / 2, window.innerWidth - TOOLTIP_WIDTH - 8));
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '3px 6px', borderRadius: 5, fontSize: 11,
+    backgroundColor: 'var(--bg)', border: '1px solid var(--border)',
+    color: 'var(--text)', outline: 'none',
+  };
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave({
+      name: editName,
+      date: editDate,
+      durationMin: editDur ? Number(editDur) : null,
+      tss: editTss ? Number(editTss) : null,
+    });
+    setSaving(false);
+    setEditing(false);
+  }
 
   return createPortal(
     <div
@@ -183,9 +210,19 @@ function TooltipPortal({ detail, color, anchorX, anchorY, canEdit, onMouseEnter,
     >
       {/* Header */}
       <div style={{ backgroundColor: `${color}12`, borderBottom: `1px solid ${color}20`, padding: '8px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span>{sportIcon(detail.type)}</span>
-          <span style={{ fontWeight: 600, color: 'var(--text)', lineHeight: 1.3 }}>{detail.name}</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <span>{sportIcon(detail.type)}</span>
+            <span style={{ fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail.name}</span>
+          </div>
+          {canEdit && !editing && (
+            <button
+              onClick={() => setEditing(true)}
+              style={{ flexShrink: 0, fontSize: 10, color: color, opacity: 0.7, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}
+            >
+              Rediger
+            </button>
+          )}
         </div>
         <div style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ backgroundColor: `${color}20`, color, fontSize: 9, padding: '1px 6px', borderRadius: 999, fontWeight: 500 }}>
@@ -197,44 +234,93 @@ function TooltipPortal({ detail, color, anchorX, anchorY, canEdit, onMouseEnter,
         </div>
       </div>
 
-      {/* Stats */}
-      {rows.length > 0 && (
-        <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
-          {rows.map((r) => (
-            <div key={r.label}>
-              <div style={{ color: 'var(--text-subtle)', fontSize: 9 }}>{r.label}</div>
-              <div style={{ color: 'var(--text)', fontSize: 11, fontWeight: 600 }}>{r.value}</div>
+      {/* Edit form */}
+      {editing ? (
+        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div>
+            <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 2 }}>Navn</div>
+            <input style={inputStyle} value={editName} onChange={e => setEditName(e.target.value)} />
+          </div>
+          <div>
+            <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 2 }}>Dato</div>
+            <input style={inputStyle} type="date" value={editDate} onChange={e => setEditDate(e.target.value)} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            <div>
+              <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 2 }}>Varighet (min)</div>
+              <input style={inputStyle} type="number" min="1" value={editDur} onChange={e => setEditDur(e.target.value)} />
             </div>
-          ))}
+            <div>
+              <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 2 }}>TSS</div>
+              <input style={inputStyle} type="number" min="0" value={editTss} onChange={e => setEditTss(e.target.value)} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              style={{
+                flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                backgroundColor: `${color}18`, color, border: `1px solid ${color}30`,
+                cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1,
+              }}
+            >
+              {saving ? 'Lagrer…' : 'Lagre'}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              style={{
+                padding: '5px 10px', borderRadius: 6, fontSize: 11,
+                backgroundColor: 'var(--bg)', color: 'var(--text-subtle)',
+                border: '1px solid var(--border)', cursor: 'pointer',
+              }}
+            >
+              Avbryt
+            </button>
+          </div>
         </div>
-      )}
+      ) : (
+        <>
+          {/* Stats */}
+          {rows.length > 0 && (
+            <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
+              {rows.map((r) => (
+                <div key={r.label}>
+                  <div style={{ color: 'var(--text-subtle)', fontSize: 9 }}>{r.label}</div>
+                  <div style={{ color: 'var(--text)', fontSize: 11, fontWeight: 600 }}>{r.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
-      {/* Description */}
-      {detail.description && (
-        <div style={{ borderTop: `1px solid ${color}15`, padding: '8px 12px' }}>
-          <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 3 }}>Øktstruktur</div>
-          <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: 'var(--text)', fontSize: 9, lineHeight: 1.5, margin: 0 }}>
-            {detail.description}
-          </pre>
-        </div>
-      )}
+          {/* Description */}
+          {detail.description && (
+            <div style={{ borderTop: `1px solid ${color}15`, padding: '8px 12px' }}>
+              <div style={{ color: 'var(--text-subtle)', fontSize: 9, marginBottom: 3 }}>Øktstruktur</div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: 'var(--text)', fontSize: 9, lineHeight: 1.5, margin: 0 }}>
+                {detail.description}
+              </pre>
+            </div>
+          )}
 
-      {/* Actions */}
-      {canEdit && (
-        <div style={{ borderTop: `1px solid ${color}15`, padding: '8px 12px', display: 'flex', gap: 6 }}>
-          <button
-            onClick={onDelete}
-            disabled={deleting}
-            style={{
-              flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 11, fontWeight: 500,
-              backgroundColor: '#dc262610', color: '#dc2626',
-              border: '1px solid #dc262625', cursor: deleting ? 'not-allowed' : 'pointer',
-              opacity: deleting ? 0.6 : 1,
-            }}
-          >
-            {deleting ? 'Sletter…' : 'Slett økt'}
-          </button>
-        </div>
+          {/* Actions */}
+          {canEdit && (
+            <div style={{ borderTop: `1px solid ${color}15`, padding: '8px 12px', display: 'flex', gap: 6 }}>
+              <button
+                onClick={onDelete}
+                disabled={deleting}
+                style={{
+                  flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                  backgroundColor: '#dc262610', color: '#dc2626',
+                  border: '1px solid #dc262625', cursor: deleting ? 'not-allowed' : 'pointer',
+                  opacity: deleting ? 0.6 : 1,
+                }}
+              >
+                {deleting ? 'Sletter…' : 'Slett økt'}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>,
     document.body
@@ -245,8 +331,8 @@ function TooltipPortal({ detail, color, anchorX, anchorY, canEdit, onMouseEnter,
 
 const CELL_HEIGHT = 52;
 
-function Chip({ chip, color, onDelete, onRefresh }: {
-  chip: WorkoutChip; color: string;
+function Chip({ chip, color, date, onDelete, onRefresh }: {
+  chip: WorkoutChip; color: string; date: string;
   onDelete: (eventId: number, athleteSlug: 'mathias' | 'karoline') => void;
   onRefresh: () => void;
 }) {
@@ -292,6 +378,22 @@ function Chip({ chip, color, onDelete, onRefresh }: {
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function handleSave(p: SavePayload) {
+    if (!chip.eventId || !chip.athleteSlug) return;
+    const update: Record<string, unknown> = { name: p.name };
+    if (p.date) update.start_date_local = `${p.date}T09:00:00`;
+    if (p.durationMin !== null) update.moving_time = p.durationMin * 60;
+    if (p.tss !== null) update.icu_training_load = p.tss;
+    await fetch('/api/events', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ athleteSlug: chip.athleteSlug, eventId: chip.eventId, event: update }),
+    });
+    setOpen(false);
+    setTooltipPos(null);
+    onRefresh();
   }
 
   function handleDragStart(e: React.DragEvent) {
@@ -357,6 +459,7 @@ function Chip({ chip, color, onDelete, onRefresh }: {
       {open && tooltipPos && (
         <TooltipPortal
           detail={chip.detail}
+          eventDate={date}
           color={color}
           anchorX={tooltipPos.x}
           anchorY={tooltipPos.y}
@@ -364,6 +467,7 @@ function Chip({ chip, color, onDelete, onRefresh }: {
           onMouseEnter={cancelHide}
           onMouseLeave={scheduleHide}
           onDelete={handleDelete}
+          onSave={handleSave}
           deleting={deleting}
         />
       )}
@@ -457,7 +561,7 @@ function DayCol({ date, chips, color, isWeekStart, onRefresh }: {
             </div>
           );
           return (
-            <Chip key={chip.eventId ?? `${chip.name}-${i}`} chip={chip} color={color} onDelete={handleDelete} onRefresh={onRefresh} />
+            <Chip key={chip.eventId ?? `${chip.name}-${i}`} chip={chip} color={color} date={format(date, 'yyyy-MM-dd')} onDelete={handleDelete} onRefresh={onRefresh} />
           );
         })}
         {/* Drop hint when dragging over empty area */}
