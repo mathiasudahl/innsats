@@ -9,6 +9,8 @@ const QUICK_PROMPTS: Record<string, (sport?: string) => string> = {
     `Jeg har tid til en ekstraøkt i dag${sport ? ` (${sport})` : ""}. Foreslå noe lett som passer dagsformen og ikke ødelegger ukens plan. Plasser økten på dagens dato.`,
   extra_load: (sport) =>
     `Jeg ønsker å øke treningsbelastningen denne uka${sport ? ` med en ekstra ${sport}-økt` : " med en ekstraøkt"}. Foreslå en økt som gir god treningsstimulus uten å overbelaste. Legg den på best mulig dag basert på planen.`,
+  adapt_week: (suggestion) =>
+    `Basert på følgende analyse, tilpass ukens treningsplan: ${suggestion ?? ""}. Foreslå konkrete endringer på eksisterende planlagte økter (kortere varighet, lavere intensitet, eller flytt økt). Vær presis om hvilke dager som berøres.`,
 };
 
 export async function POST(req: NextRequest) {

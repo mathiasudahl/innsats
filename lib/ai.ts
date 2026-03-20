@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Activity, WorkoutEvent, Wellness } from "./types";
-import { formatDate, formatTime, formatDistance } from "./date-utils";
+import type { Activity, WorkoutEvent, Wellness, WeatherData } from "./types";
+import { formatDate, formatTime, formatDistance, today, daysAgo } from "./date-utils";
 
 export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -143,6 +143,102 @@ export function buildContext(
   }
 
   return ctx;
+}
+
+export function buildDailyAnalysisPrompt(
+  athleteName: string,
+  athleteSlug: string,
+  activities: Activity[],
+  todayEvents: WorkoutEvent[],
+  futureEvents: WorkoutEvent[],
+  wellness: Wellness[],
+  weather: WeatherData | null
+): string {
+  const todayStr = today();
+  const yesterdayStr = daysAgo(1);
+
+  const yesterdayActivities = activities.filter(
+    (a) => a.start_date_local.slice(0, 10) === yesterdayStr
+  );
+  const latestWellness = wellness.length > 0 ? wellness[wellness.length - 1] : null;
+
+  let prompt = `Du er en treningscoach. Analyser dataene nedenfor og returner BARE et JSON-objekt (ingen markdown, ingen tekst utenfor JSON).
+
+Utøver: ${athleteName}
+Dato i dag: ${todayStr}
+`;
+
+  if (latestWellness) {
+    prompt += `\nDagsform: CTL=${Math.round(latestWellness.ctl ?? 0)}, ATL=${Math.round(latestWellness.atl ?? 0)}, TSB=${Math.round(latestWellness.tsb ?? 0)}`;
+    if (latestWellness.weight) prompt += `, Vekt=${latestWellness.weight.toFixed(1)}kg`;
+    if (latestWellness.hrv) prompt += `, HRV=${latestWellness.hrv}`;
+    if (latestWellness.sleepSecs) prompt += `, Søvn=${Math.round(latestWellness.sleepSecs / 3600 * 10) / 10}t`;
+    if (latestWellness.readiness) prompt += `, Readiness=${latestWellness.readiness}`;
+    prompt += "\n";
+  }
+
+  if (yesterdayActivities.length > 0) {
+    prompt += "\nGårsdagens gjennomførte økt(er):\n";
+    for (const a of yesterdayActivities) {
+      const parts = [a.type, a.name, formatTime(a.moving_time)];
+      if (a.distance > 0) parts.push(formatDistance(a.distance));
+      if (a.icu_training_load) parts.push(`${Math.round(a.icu_training_load)} TSS`);
+      if (a.average_heartrate) parts.push(`${Math.round(a.average_heartrate)} bpm`);
+      prompt += `- ${parts.join(" | ")}\n`;
+    }
+  } else {
+    prompt += "\nGårsdagens aktivitet: HVILEDAG (ingen registrert økt — dette er normalt og etter plan).\n";
+  }
+
+  if (todayEvents.length > 0) {
+    prompt += "\nPlanlagt for i dag:\n";
+    for (const e of todayEvents) {
+      const parts = [e.type, e.name];
+      if (e.moving_time) parts.push(formatTime(e.moving_time));
+      if (e.icu_training_load) parts.push(`${Math.round(e.icu_training_load)} TSS`);
+      prompt += `- ${parts.join(" | ")}\n`;
+    }
+  } else {
+    prompt += "\nPlanlagt for i dag: Ingen planlagte økter.\n";
+  }
+
+  if (futureEvents.length > 0) {
+    prompt += "\nØkter planlagt neste 7 dager:\n";
+    for (const e of futureEvents.slice(0, 10)) {
+      const parts = [formatDate(e.start_date_local), e.type, e.name];
+      if (e.moving_time) parts.push(formatTime(e.moving_time));
+      if (e.icu_training_load) parts.push(`${Math.round(e.icu_training_load)} TSS`);
+      prompt += `- ${parts.join(" | ")}\n`;
+    }
+  }
+
+  if (weather) {
+    prompt += `\nVær i dag: ${weather.temperature}°C, vind ${weather.windspeed} m/s, kode ${weather.weathercode}\n`;
+  }
+
+  prompt += `
+Instruksjoner:
+1. weekType: Bestem type treningsuke basert på kommende plan (f.eks. "Restitusjonsuke", "Oppbyggingsuke", "Toppuke", "Konkurranseuke", "Rolig uke"). Maks 2 ord.
+2. summary: Kommenter gårsdagens økt KORT (maks 2 setninger). Hvis hviledag: si noe positivt om hvile og hva som venter. ALDRI kall hviledag et "avvik fra plan" — hvile ER planen.
+3. nutritionAdvice: Gi en KORT kostholdsanbefaling for i dag (maks 1 setning). Fokuser på praktiske tips.
+4. weatherNote: Bare hvis regn (kode 51-82) eller sterk vind (>10 m/s) treffer planlagt utendørsøkt (Run/Ride). Null ellers.
+5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS (ikke hviledag). Hviledag = adaptWeek=false.
+6. adaptSuggestion: Konkret forslag kun om adaptWeek=true.
+
+Returner BARE dette JSON-objektet:
+{
+  "date": "${todayStr}",
+  "athleteSlug": "${athleteSlug}",
+  "weekType": "Restitusjonsuke",
+  "summary": "Kort kommentar om i går",
+  "nutritionAdvice": "Konkret anbefaling for i dag",
+  "weatherNote": null,
+  "adaptWeek": false,
+  "adaptSuggestion": null,
+  "generatedAt": "${new Date().toISOString()}"
+}`;
+
+  return prompt;
 }
 
 export function buildShortContext(

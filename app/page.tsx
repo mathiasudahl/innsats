@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { Calendar } from '@/components/Calendar';
+import { DayModule } from '@/components/DayModule';
 import { WorkoutWizard, type SuccessBanner, type WorkoutPreview } from '@/components/WorkoutWizard';
-import type { Activity, WorkoutEvent } from '@/lib/types';
+import type { Activity, WorkoutEvent, WeatherData } from '@/lib/types';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -88,6 +89,7 @@ export default function Home() {
   const [karolineActivities, setKarolineActivities] = useState<Activity[]>([]);
   const [karolineEvents, setKarolineEvents] = useState<WorkoutEvent[]>([]);
   const [calLoading, setCalLoading] = useState(true);
+  const [weather, setWeather] = useState<WeatherData | null>(null);
   const [success, setSuccess] = useState<SuccessBanner | null>(null);
   const [preview, setPreview] = useState<WorkoutPreview | null>(null);
 
@@ -106,6 +108,7 @@ export default function Home() {
 
   useEffect(() => {
     refresh();
+    fetch('/api/weather').then((r) => r.json()).then((d) => { if (!d.error) setWeather(d); }).catch(() => {});
   }, [refresh]);
 
   function handleSuccess(banner: SuccessBanner) {
@@ -116,6 +119,17 @@ export default function Home() {
 
   return (
     <div className="space-y-4">
+      {/* Day module */}
+      <Suspense fallback={null}>
+        <DayModule
+          mathiasActivities={mathiasActivities}
+          mathiasEvents={mathiasEvents}
+          karolineActivities={karolineActivities}
+          karolineEvents={karolineEvents}
+          onRefresh={refresh}
+        />
+      </Suspense>
+
       {/* Calendar */}
       {calLoading ? (
         <CalendarSkeleton />
@@ -126,6 +140,7 @@ export default function Home() {
           karolineActivities={karolineActivities}
           karolineEvents={karolineEvents}
           preview={preview}
+          weather={weather}
           onRefresh={refresh}
         />
       )}

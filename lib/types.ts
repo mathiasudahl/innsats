@@ -80,3 +80,15 @@ export interface FitnessPoint {
   atl: number;
   tsb: number;
 }
+
+export interface DailyAnalysis {
+  date: string;
+  athleteSlug: string;
+  weekType: string;
+  summary: string;
+  nutritionAdvice: string;
+  weatherNote?: string;
+  adaptWeek: boolean;
+  adaptSuggestion?: string;
+  generatedAt: string;
+}

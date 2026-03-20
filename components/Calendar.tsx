@@ -4,7 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { addDays, format, isToday, isBefore, startOfDay } from 'date-fns';
 import { nb } from 'date-fns/locale';
-import type { Activity, WorkoutEvent } from '@/lib/types';
+import type { Activity, WorkoutEvent, WeatherData } from '@/lib/types';
 
 // ─── Sport metadata ───────────────────────────────────────────────────────────
 
@@ -49,6 +49,7 @@ export interface CalendarProps {
   karolineActivities: Activity[];
   karolineEvents: WorkoutEvent[];
   preview?: { workout: WorkoutEvent; athleteSlug: 'mathias' | 'karoline' } | null;
+  weather?: WeatherData | null;
   onRefresh: () => void;
 }
 
@@ -479,8 +480,20 @@ function Chip({ chip, color, date, onDelete, onRefresh }: {
 
 const SLOTS = 3;
 
-function DayCol({ date, chips, color, isWeekStart, onRefresh }: {
-  date: Date; chips: WorkoutChip[]; color: string; isWeekStart: boolean; onRefresh: () => void;
+function weatherIcon(code: number): string {
+  if (code <= 1) return '☀️';
+  if (code <= 3) return '☁️';
+  if (code <= 48) return '🌫️';
+  if (code <= 67) return '🌧️';
+  if (code <= 77) return '❄️';
+  if (code <= 82) return '🌦️';
+  if (code <= 86) return '🌨️';
+  return '⛈️';
+}
+
+function DayCol({ date, chips, color, isWeekStart, weather, onRefresh }: {
+  date: Date; chips: WorkoutChip[]; color: string; isWeekStart: boolean;
+  weather?: WeatherData | null; onRefresh: () => void;
 }) {
   const today = isToday(date);
   const past = isBefore(date, startOfDay(new Date())) && !today;
@@ -549,6 +562,11 @@ function DayCol({ date, chips, color, isWeekStart, onRefresh }: {
         <div style={{ color: today ? color : 'var(--text-subtle)', fontSize: 11, fontWeight: today ? 700 : 500 }}>
           {format(date, 'd', { locale: nb })}
         </div>
+        {today && weather && (
+          <div style={{ fontSize: 9, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.2 }}>
+            {weatherIcon(weather.weathercode)}{weather.temperature}°
+          </div>
+        )}
       </div>
 
       {/* Slots */}
@@ -580,10 +598,11 @@ function DayCol({ date, chips, color, isWeekStart, onRefresh }: {
 
 // ─── Athlete row ──────────────────────────────────────────────────────────────
 
-function AthleteRow({ name, color, days, activities, events, previewEvent, borderBottom, onRefresh, athleteSlug }: {
+function AthleteRow({ name, color, days, activities, events, previewEvent, borderBottom, weather, onRefresh, athleteSlug }: {
   name: string; color: string; days: Date[];
   activities: Activity[]; events: WorkoutEvent[];
   previewEvent?: WorkoutEvent | null; borderBottom?: boolean;
+  weather?: WeatherData | null;
   onRefresh: () => void; athleteSlug: 'mathias' | 'karoline';
 }) {
   return (
@@ -606,6 +625,7 @@ function AthleteRow({ name, color, days, activities, events, previewEvent, borde
               chips={getChips(date, activities, events, athleteSlug, previewEvent)}
               color={color}
               isWeekStart={dow === 0 && i > 0}
+              weather={isToday(date) ? weather : null}
               onRefresh={onRefresh}
             />
           );
@@ -617,7 +637,7 @@ function AthleteRow({ name, color, days, activities, events, previewEvent, borde
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 
-export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, onRefresh }: CalendarProps) {
+export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, weather, onRefresh }: CalendarProps) {
   const days = buildDays();
   const mathiasPreview = preview?.athleteSlug === 'mathias' ? preview.workout : null;
   const karolinePreview = preview?.athleteSlug === 'karoline' ? preview.workout : null;
@@ -631,10 +651,10 @@ export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities,
         <div style={{ minWidth: 1050 }}>
           <AthleteRow name="Mathias" athleteSlug="mathias" color="#16a34a" days={days}
             activities={mathiasActivities} events={mathiasEvents} previewEvent={mathiasPreview}
-            borderBottom onRefresh={onRefresh} />
+            borderBottom weather={weather} onRefresh={onRefresh} />
           <AthleteRow name="Karoline" athleteSlug="karoline" color="#2563eb" days={days}
             activities={karolineActivities} events={karolineEvents} previewEvent={karolinePreview}
-            onRefresh={onRefresh} />
+            weather={weather} onRefresh={onRefresh} />
         </div>
       </div>
     </div>
