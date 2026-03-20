@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { addDays, format, isToday, isBefore, startOfDay } from 'date-fns';
 import { nb } from 'date-fns/locale';
 import type { Activity, WorkoutEvent, WeatherData, WeatherForecast } from '@/lib/types';
+import { getOfflineWorkout, type OfflineWorkout } from '@/lib/offline-program';
 
 // ─── Sport metadata ───────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ export interface CalendarProps {
   weather?: WeatherData | null;
   forecast?: WeatherForecast;
   onRefresh: () => void;
+  onAddOfflineWorkout: (athleteSlug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
 }
 
 interface ChipDetail {
@@ -66,6 +68,7 @@ interface WorkoutChip {
   icon: string; name: string; meta: string; done: boolean; preview?: boolean;
   eventId?: number;
   athleteSlug?: 'mathias' | 'karoline';
+  offlineLogo?: boolean;
   detail: ChipDetail;
 }
 
@@ -120,9 +123,11 @@ function getChips(
     if (e.icu_training_load) meta.push(`${Math.round(e.icu_training_load)} TSS`);
     if (isIndoor === true) meta.push('inne');
     else if (isIndoor === false) meta.push('ute');
+    const isOffline = !!e.description?.startsWith('Strava: https://www.strava.com');
     chips.push({
       icon: sportIcon(e.type), name: shortName(e.name), meta: meta.join(' · '), done: false,
       eventId: e.id, athleteSlug,
+      offlineLogo: isOffline,
       detail: {
         name: shortName(e.name), type: e.type, done: false,
         duration: e.moving_time, tss: e.icu_training_load ? Math.round(e.icu_training_load) : undefined,
@@ -448,7 +453,12 @@ function Chip({ chip, color, date, onDelete, onRefresh }: {
         filter: open && canEdit ? 'brightness(1.05)' : undefined,
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: 10, flexShrink: 0, lineHeight: 1.4 }}>{chip.icon}</span>
+          {chip.offlineLogo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/offline-logo.png" alt="" style={{ width: 13, marginTop: 1, flexShrink: 0, opacity: 0.5, filter: 'sepia(1) saturate(0.5) hue-rotate(75deg) brightness(0.4)' }} />
+          ) : (
+            <span style={{ fontSize: 10, flexShrink: 0, lineHeight: 1.4 }}>{chip.icon}</span>
+          )}
           <span style={{
             fontSize: 10, lineHeight: 1.3, fontWeight: 500,
             color: chip.done ? color : chip.preview ? color : 'var(--text)',
@@ -655,9 +665,217 @@ function AthleteRow({ name, color, days, activities, events, previewEvent, borde
   );
 }
 
+// ─── Offline row ──────────────────────────────────────────────────────────────
+
+const OFFLINE_COLOR = '#2d3a2e';
+
+function OfflineCell({ date, onAdd }: {
+  date: Date;
+  onAdd: (slug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
+}) {
+  const workout = getOfflineWorkout(date);
+  const [hovered, setHovered] = useState(false);
+  const [step, setStep] = useState<null | 'add' | 'replace'>(null);
+  const [loading, setLoading] = useState(false);
+
+  const today = isToday(date);
+  const past = isBefore(date, startOfDay(new Date())) && !today;
+  const dateStr = format(date, 'yyyy-MM-dd');
+  const dayOfWeek = (date.getDay() + 6) % 7;
+  const isWeekStart = dayOfWeek === 0;
+
+  async function handlePick(slug: 'mathias' | 'karoline') {
+    if (!workout || !step) return;
+    setLoading(true);
+    try {
+      await onAdd(slug, workout, dateStr, step === 'replace');
+    } finally {
+      setLoading(false);
+      setStep(null);
+    }
+  }
+
+  // Past or no workout: cross-hatch cell
+  if (past || !workout) {
+    return (
+      <div style={{
+        borderLeft: isWeekStart ? '2px solid var(--border)' : '1px solid var(--border)',
+        minHeight: 56,
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: 'transparent',
+      }}>
+        {/* Subtle diagonal grid lines */}
+        <svg
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.13 }}
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <defs>
+            <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="8" stroke={OFFLINE_COLOR} strokeWidth="1" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#hatch)" />
+        </svg>
+      </div>
+    );
+  }
+
+  // Shared hatch pattern id — unique per cell to avoid SVG id collisions
+  const hatchId = `hatch-action-${dateStr}`;
+
+  const hatchUrl = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cdefs%3E%3Cpattern id='h' width='5' height='5' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'%3E%3Cline x1='0' y1='0' x2='0' y2='5' stroke='%232d3a2e' stroke-width='0.8' stroke-opacity='0.22'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='5' height='5' fill='url(%23h)'/%3E%3C/svg%3E")`;
+
+  return (
+    <div
+      style={{
+        borderLeft: isWeekStart ? '2px solid var(--border)' : '1px solid var(--border)',
+        minHeight: 56,
+        position: 'relative',
+        cursor: 'default',
+        backgroundColor: hovered ? `${OFFLINE_COLOR}16` : `${OFFLINE_COLOR}0a`,
+        transition: 'background-color 0.12s',
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '6px 6px 5px',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setStep(null); }}
+      onKeyDown={(e) => e.key === 'Escape' && setStep(null)}
+    >
+      {/* Left accent bar */}
+      <div style={{
+        position: 'absolute', left: 0, top: 0, bottom: 0, width: 2,
+        backgroundColor: OFFLINE_COLOR, opacity: today ? 1 : 0.45,
+      }} />
+
+      {/* Top: logo, then name on new line */}
+      <div style={{ display: 'flex', flexDirection: 'column', paddingLeft: 4, flex: '0 0 auto', gap: 3 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/offline-logo.png"
+          alt=""
+          style={{ width: 22, flexShrink: 0, opacity: 0.5, filter: 'sepia(1) saturate(0.5) hue-rotate(75deg) brightness(0.4)' }}
+        />
+        <div style={{
+          fontSize: 10, fontWeight: 600, color: OFFLINE_COLOR,
+          lineHeight: 1.25,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        }}>
+          {workout.name}
+        </div>
+      </div>
+
+      {/* Strava link — always visible */}
+      {workout.stravaUrl && (
+        <a
+          href={workout.stravaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{
+            fontSize: 8, color: `${OFFLINE_COLOR}50`, textDecoration: 'none',
+            paddingLeft: 4, letterSpacing: '0.02em', flex: '0 0 auto', marginTop: 2,
+          }}
+        >
+          strava ↗
+        </a>
+      )}
+
+      {/* Spacer */}
+      <div style={{ flex: 1 }} />
+
+      {/* Hover actions — fill remaining height */}
+      {hovered && !step && (
+        <div style={{ display: 'flex', flex: '0 0 auto', marginTop: 4 }}>
+          {(['add', 'replace'] as const).map((action) => (
+            <button
+              key={action}
+              onClick={() => setStep(action)}
+              style={{
+                flex: 1, fontSize: 9, padding: '4px 0', borderRadius: 0, cursor: 'pointer',
+                backgroundImage: hatchUrl,
+                backgroundColor: 'transparent',
+                color: OFFLINE_COLOR, border: 'none', fontWeight: 600,
+              }}
+            >
+              {action === 'add' ? '+ Legg til' : '⇄ Erstatt'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Person picker — two big round buttons filling full width, no label */}
+      {step && (
+        <div style={{ display: 'flex', gap: 4, flex: '0 0 auto', marginTop: 4 }}>
+          {(['mathias', 'karoline'] as const).map((slug) => {
+            const c = slug === 'mathias' ? '#16a34a' : '#2563eb';
+            const hatchUrlAthlete = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cdefs%3E%3Cpattern id='h' width='5' height='5' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'%3E%3Cline x1='0' y1='0' x2='0' y2='5' stroke='${encodeURIComponent(c)}' stroke-width='0.9' stroke-opacity='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='5' height='5' fill='url(%23h)'/%3E%3C/svg%3E")`;
+            return (
+              <button
+                key={slug}
+                disabled={loading}
+                onClick={() => handlePick(slug)}
+                title={slug.charAt(0).toUpperCase() + slug.slice(1)}
+                style={{
+                  flex: 1, aspectRatio: '1', borderRadius: '50%', fontSize: 9, fontWeight: 700,
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  backgroundImage: hatchUrlAthlete,
+                  backgroundColor: 'transparent',
+                  color: c, border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                {slug === 'mathias' ? 'M' : 'K'}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OfflineRow({ days, onAdd }: {
+  days: Date[];
+  onAdd: (slug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
+}) {
+  return (
+    <div className="flex">
+      {/* Label column */}
+      <div style={{
+        width: 28, flexShrink: 0,
+        borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 4px',
+      }}>
+        {/* Logo — top */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/offline-logo.png"
+          alt="Offline"
+          style={{ width: 16, opacity: 0.5, filter: 'sepia(1) saturate(0.5) hue-rotate(75deg) brightness(0.4)', marginBottom: 6 }}
+        />
+        {/* Rotated text — bottom */}
+        <div style={{
+          color: OFFLINE_COLOR, fontSize: 9, writingMode: 'vertical-rl', transform: 'rotate(180deg)',
+          fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.6,
+        }}>
+          Offline
+        </div>
+      </div>
+      <div className="grid flex-1" style={{ gridTemplateColumns: 'repeat(14, minmax(72px, 1fr))' }}>
+        {days.map((date, i) => (
+          <OfflineCell key={i} date={date} onAdd={onAdd} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 
-export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, forecast, onRefresh }: CalendarProps) {
+export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, forecast, onRefresh, onAddOfflineWorkout }: CalendarProps) {
   const days = buildDays();
   const mathiasPreview = preview?.athleteSlug === 'mathias' ? preview.workout : null;
   const karolinePreview = preview?.athleteSlug === 'karoline' ? preview.workout : null;
@@ -674,7 +892,8 @@ export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities,
             borderBottom forecast={forecast} showWeatherRow onRefresh={onRefresh} />
           <AthleteRow name="Karoline" athleteSlug="karoline" color="#2563eb" days={days}
             activities={karolineActivities} events={karolineEvents} previewEvent={karolinePreview}
-            forecast={forecast} showWeatherRow onRefresh={onRefresh} />
+            borderBottom forecast={forecast} showWeatherRow onRefresh={onRefresh} />
+          <OfflineRow days={days} onAdd={onAddOfflineWorkout} />
         </div>
       </div>
     </div>

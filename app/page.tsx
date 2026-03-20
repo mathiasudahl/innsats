@@ -5,6 +5,7 @@ import { Calendar } from '@/components/Calendar';
 import { DayModule } from '@/components/DayModule';
 import { WorkoutWizard, type SuccessBanner, type WorkoutPreview } from '@/components/WorkoutWizard';
 import type { Activity, WorkoutEvent, WeatherData, WeatherForecast } from '@/lib/types';
+import type { OfflineWorkout } from '@/lib/offline-program';
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -117,6 +118,42 @@ export default function Home() {
     }).catch(() => {});
   }, [refresh]);
 
+  async function handleAddOfflineWorkout(
+    slug: 'mathias' | 'karoline',
+    workout: OfflineWorkout,
+    date: string,
+    replace: boolean,
+  ) {
+    if (replace) {
+      const events = slug === 'mathias' ? mathiasEvents : karolineEvents;
+      const ride = events.find(
+        (e) => e.start_date_local.slice(0, 10) === date && e.type === 'Ride',
+      );
+      if (ride?.id) {
+        await fetch('/api/events', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ athleteSlug: slug, eventId: ride.id }),
+        });
+      }
+    }
+    await fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        athleteSlug: slug,
+        event: {
+          name: workout.name,
+          start_date_local: `${date}T17:00:00`,
+          type: 'Ride',
+          category: 'WORKOUT',
+          ...(workout.stravaUrl ? { description: `Strava: ${workout.stravaUrl}` } : {}),
+        },
+      }),
+    });
+    refresh();
+  }
+
   function handleSuccess(banner: SuccessBanner) {
     setSuccess(banner);
     setPreview(null);
@@ -150,6 +187,7 @@ export default function Home() {
           weather={weather}
           forecast={forecast}
           onRefresh={refresh}
+          onAddOfflineWorkout={handleAddOfflineWorkout}
         />
       )}
 
