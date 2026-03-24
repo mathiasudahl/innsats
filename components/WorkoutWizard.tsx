@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { parseWorkoutFromText } from '@/lib/parse-workout';
 import { AddToIntervalsButton } from '@/components/ai/AddToIntervalsButton';
 import type { WorkoutEvent, UserConfig } from '@/lib/types';
+import type { AthleteAwayResult, AwayPlanResult } from '@/app/api/away-plan/route';
 
 type AthleteSlug = 'mathias' | 'karoline';
-type Step = 'action' | 'variant' | 'athlete' | 'sport' | 'result';
+type Step = 'action' | 'variant' | 'athlete' | 'sport' | 'result' | 'away_setup' | 'away_result';
 
 export interface SuccessBanner {
   label: string;
@@ -32,12 +33,47 @@ const ACTIONS = [
     description: 'AI foreslår en økt basert på dagsform',
   },
   {
+    id: 'away',
+    label: 'Borte',
+    icon: '🧳',
+    description: 'Tilpass plan til utstyret du har med',
+  },
+  {
     id: 'sick',
     label: 'Syk dag',
     icon: '🤒',
     description: 'Fjern planlagte økter for i dag',
   },
 ] as const;
+
+const EQUIPMENT_OPTIONS = [
+  { id: 'Run', label: 'Løpesko', icon: '👟' },
+  { id: 'Ride', label: 'Sykkel', icon: '🚴' },
+  { id: 'Swim', label: 'Svømmebasseng', icon: '🏊' },
+  { id: 'WeightTraining', label: 'Treningsstudio', icon: '🏋️' },
+  { id: 'NordicSki', label: 'Toppturski', icon: '⛷️' },
+  { id: 'IceClimbing', label: 'Isøkser/stegjern', icon: '🧊' },
+  { id: 'RockClimbing', label: 'Klatresele/-sko', icon: '🧗' },
+  { id: 'Boxing', label: 'Boksehansker', icon: '🥊' },
+  { id: 'Kayaking', label: 'Kajakk/padleåre', icon: '🛶' },
+  { id: 'Hike', label: 'Tursko/sekk', icon: '🥾' },
+];
+
+function addDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+function fmtDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('nb-NO', { day: 'numeric', month: 'short' });
+}
+const SPORT_ICON: Record<string, string> = {
+  Run: '🏃', Ride: '🚴', Swim: '🏊', WeightTraining: '🏋️',
+  NordicSki: '⛷️', Rowing: '🚣', VirtualRide: '🚴', VirtualRun: '🏃',
+};
 
 const EXTRA_VARIANTS = [
   {
@@ -97,10 +133,12 @@ interface ActionCardProps {
   description?: string;
   color?: string;
   onClick: () => void;
+  fullWidth?: boolean;
 }
 
-function ActionCard({ icon, label, description, color, onClick }: ActionCardProps) {
+function ActionCard({ icon, label, description, color, onClick, fullWidth }: ActionCardProps) {
   return (
+    <div className={fullWidth ? 'col-span-2' : undefined}>
     <button
       onClick={onClick}
       className="flex items-start gap-3 px-4 py-3 rounded-2xl text-left transition-all w-full group"
@@ -121,6 +159,7 @@ function ActionCard({ icon, label, description, color, onClick }: ActionCardProp
         )}
       </div>
     </button>
+    </div>
   );
 }
 
@@ -273,6 +312,15 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
   const [sickLoading, setSickLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Away state
+  const [awaySlugs, setAwaySlugs] = useState<AthleteSlug[]>(config.mode === 'preset' ? ['mathias', 'karoline'] : ['mathias']);
+  const [awayFrom, setAwayFrom] = useState(() => addDays(todayIso(), 1));
+  const [awayTo, setAwayTo] = useState(() => addDays(todayIso(), 4));
+  const [awayEquipment, setAwayEquipment] = useState<string[]>(['Run']);
+  const [awayResults, setAwayResults] = useState<AthleteAwayResult[]>([]);
+  const [awayApplied, setAwayApplied] = useState<Set<number>>(new Set());
+  const [awayApplying, setAwayApplying] = useState(false);
+
   const athleteColor = athleteSlug === 'mathias' ? '#16a34a' : '#2563eb';
 
   function reset() {
@@ -284,6 +332,8 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
     setSportLabel(null);
     setAiResult(null);
     setError(null);
+    setAwayResults([]);
+    setAwayApplied(new Set());
     onPreview(null);
   }
 
@@ -292,6 +342,10 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
   function pickAction(id: string, label: string) {
     setAction(id);
     setActionLabel(label);
+    if (id === 'away') {
+      setStep('away_setup');
+      return;
+    }
     if (config.mode !== 'preset') {
       // Skip athlete picker in custom mode
       setAthleteSlug(defaultSlug);
@@ -303,6 +357,68 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
     } else {
       setStep(id === 'extra' ? 'variant' : 'athlete');
     }
+  }
+
+  async function fetchAwayPlan() {
+    setLoading(true);
+    setError(null);
+    setAwayResults([]);
+    try {
+      const body = config.mode === 'preset'
+        ? { athleteSlugs: awaySlugs, startDate: awayFrom, endDate: awayTo, equipment: awayEquipment }
+        : { athleteId: config.athleteId, apiKey: config.apiKey, anthropicKey: config.anthropicKey, athleteName: config.name, startDate: awayFrom, endDate: awayTo, equipment: awayEquipment };
+
+      const res = await fetch('/api/away-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Feil fra server');
+      const data = await res.json();
+      setAwayResults(data.athletes ?? []);
+      setStep('away_result');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ukjent feil');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function applyAllChanges() {
+    setAwayApplying(true);
+    const allReplace = awayResults.flatMap((ar) =>
+      ar.results.filter((r): r is AwayPlanResult & { action: 'replace'; newWorkout: WorkoutEvent } =>
+        r.action === 'replace' && !!r.newWorkout && !awayApplied.has(r.eventId)
+      ).map((r) => ({ ...r, athleteSlug: ar.athleteSlug }))
+    );
+
+    await Promise.all(allReplace.map(async (r) => {
+      // Delete original
+      await fetch('/api/events', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          config.mode === 'preset'
+            ? { athleteSlug: r.athleteSlug, eventId: r.eventId }
+            : { athleteId: config.athleteId, apiKey: config.apiKey, eventId: r.eventId }
+        ),
+      });
+      // Create new
+      await fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          config.mode === 'preset'
+            ? { athleteSlug: r.athleteSlug, event: r.newWorkout }
+            : { athleteId: config.athleteId, apiKey: config.apiKey, event: r.newWorkout }
+        ),
+      });
+      setAwayApplied((prev) => new Set([...prev, r.eventId]));
+    }));
+
+    setAwayApplying(false);
+    onSuccess({ label: `${allReplace.length} økt${allReplace.length !== 1 ? 'er' : ''} tilpasset bortereise`, url: '', color: '#f59e0b' });
+    reset();
   }
 
   function pickVariant(variantId: string, label: string) {
@@ -414,17 +530,20 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
     <div>
       {/* Step: velg handling */}
       {step === 'action' && (
-        <div className="space-y-2">
+        <div>
           <SectionLabel>Hurtighandling</SectionLabel>
-          {ACTIONS.map((a) => (
-            <ActionCard
-              key={a.id}
-              icon={a.icon}
-              label={a.label}
-              description={a.description}
-              onClick={() => pickAction(a.id, a.label)}
-            />
-          ))}
+          <div className="grid grid-cols-2 gap-2">
+            {ACTIONS.map((a, i) => (
+              <ActionCard
+                key={a.id}
+                icon={a.icon}
+                label={a.label}
+                description={a.description}
+                onClick={() => pickAction(a.id, a.label)}
+                fullWidth={ACTIONS.length % 2 !== 0 && i === ACTIONS.length - 1}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -495,6 +614,199 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Step: away_setup */}
+      {step === 'away_setup' && (
+        <div>
+          <BackButton onClick={() => setStep('action')} />
+          <Breadcrumb parts={[actionLabel!]} />
+
+          {/* Hvem */}
+          {config.mode === 'preset' && (
+            <div style={{ marginBottom: 16 }}>
+              <SectionLabel>Hvem gjelder det?</SectionLabel>
+              <div className="flex gap-2">
+                {ATHLETES.map((a) => {
+                  const selected = awaySlugs.includes(a.slug);
+                  return (
+                    <button
+                      key={a.slug}
+                      onClick={() => setAwaySlugs((prev) =>
+                        selected ? prev.filter((s) => s !== a.slug) : [...prev, a.slug]
+                      )}
+                      className="flex-1 py-2 rounded-xl text-sm font-medium transition-all"
+                      style={{
+                        backgroundColor: selected ? `${a.color}18` : 'var(--bg)',
+                        border: `1px solid ${selected ? a.color : 'var(--border)'}`,
+                        color: selected ? a.color : 'var(--text-subtle)',
+                      }}
+                    >
+                      {a.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Periode */}
+          <div style={{ marginBottom: 16 }}>
+            <SectionLabel>Periode</SectionLabel>
+            <div className="flex gap-2 items-center">
+              <input
+                type="date"
+                value={awayFrom}
+                onChange={(e) => setAwayFrom(e.target.value)}
+                className="flex-1 rounded-xl text-sm px-3 py-2"
+                style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              />
+              <span style={{ color: 'var(--text-subtle)', fontSize: 12 }}>–</span>
+              <input
+                type="date"
+                value={awayTo}
+                min={awayFrom}
+                onChange={(e) => setAwayTo(e.target.value)}
+                className="flex-1 rounded-xl text-sm px-3 py-2"
+                style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              />
+            </div>
+          </div>
+
+          {/* Utstyr */}
+          <div style={{ marginBottom: 20 }}>
+            <SectionLabel>Tilgjengelig utstyr</SectionLabel>
+            <div className="grid grid-cols-3 gap-2">
+              {EQUIPMENT_OPTIONS.map((eq) => {
+                const selected = awayEquipment.includes(eq.id);
+                return (
+                  <button
+                    key={eq.id}
+                    onClick={() => setAwayEquipment((prev) =>
+                      selected ? prev.filter((e) => e !== eq.id) : [...prev, eq.id]
+                    )}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all"
+                    style={{
+                      backgroundColor: selected ? '#f59e0b18' : 'var(--bg)',
+                      border: `1px solid ${selected ? '#f59e0b' : 'var(--border)'}`,
+                    }}
+                  >
+                    <span>{eq.icon}</span>
+                    <span className="text-sm font-medium" style={{ color: selected ? '#b45309' : 'var(--text-subtle)' }}>
+                      {eq.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {awayEquipment.length === 0 && (
+              <p className="text-xs mt-2" style={{ color: 'var(--text-subtle)' }}>
+                Ingen utstyr valgt — KI foreslår kroppsvekt/gåturer
+              </p>
+            )}
+          </div>
+
+          {error && <p className="text-sm mb-3" style={{ color: '#dc2626' }}>{error}</p>}
+
+          <button
+            onClick={fetchAwayPlan}
+            disabled={loading || (config.mode === 'preset' && awaySlugs.length === 0)}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
+            style={{ backgroundColor: '#f59e0b18', color: '#b45309', border: '1px solid #f59e0b40' }}
+          >
+            {loading ? 'Analyserer plan…' : 'Tilpass plan'}
+          </button>
+        </div>
+      )}
+
+      {/* Step: away_result */}
+      {step === 'away_result' && (
+        <div>
+          <BackButton onClick={() => setStep('away_setup')} />
+          <Breadcrumb parts={[actionLabel!, `${fmtDate(awayFrom)}–${fmtDate(awayTo)}`]} />
+
+          <div className="space-y-4">
+            {awayResults.map((ar) => {
+              const replaceCount = ar.results.filter((r) => r.action === 'replace').length;
+              const unapplied = ar.results.filter((r) => r.action === 'replace' && !awayApplied.has(r.eventId));
+              return (
+                <div key={ar.athleteSlug}>
+                  {awayResults.length > 1 && (
+                    <p className="text-xs font-semibold mb-2" style={{ color: ar.athleteColor }}>{ar.athleteName}</p>
+                  )}
+                  {ar.results.length === 0 && (
+                    <p className="text-xs" style={{ color: 'var(--text-subtle)' }}>Ingen planlagte økter i perioden.</p>
+                  )}
+                  <div className="space-y-1.5">
+                    {ar.results.map((r) => {
+                      const applied = awayApplied.has(r.eventId);
+                      return (
+                        <div
+                          key={r.eventId}
+                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl"
+                          style={{
+                            backgroundColor: r.action === 'keep' ? `${ar.athleteColor}08` : '#f59e0b08',
+                            border: `1px solid ${r.action === 'keep' ? `${ar.athleteColor}20` : '#f59e0b20'}`,
+                            opacity: applied ? 0.5 : 1,
+                          }}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span style={{ fontSize: 10 }}>{r.action === 'keep' ? '✓' : '↺'}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span style={{ fontSize: 10 }}>{SPORT_ICON[r.originalEvent.type] ?? '⚡'}</span>
+                                <span className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
+                                  {r.originalEvent.name}
+                                </span>
+                                {r.action === 'replace' && r.newWorkout && (
+                                  <>
+                                    <span style={{ color: 'var(--text-subtle)', fontSize: 10 }}>→</span>
+                                    <span style={{ fontSize: 10 }}>{SPORT_ICON[r.newWorkout.type] ?? '⚡'}</span>
+                                    <span className="text-xs font-medium" style={{ color: '#b45309' }}>
+                                      {r.newWorkout.name}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                              <div className="text-xs mt-0.5" style={{ color: 'var(--text-subtle)', fontSize: 9 }}>
+                                {fmtDate(r.originalEvent.start_date_local)}
+                              </div>
+                            </div>
+                          </div>
+                          {r.action === 'replace' && r.newWorkout && !applied && (
+                            <AddToIntervalsButton
+                              workout={r.newWorkout}
+                              athleteSlug={ar.athleteSlug as AthleteSlug}
+                              athleteId={config.mode !== 'preset' ? config.athleteId : undefined}
+                              apiKey={config.mode !== 'preset' ? config.apiKey : undefined}
+                              color={ar.athleteColor}
+                              onAdded={() => setAwayApplied((prev) => new Set([...prev, r.eventId]))}
+                            />
+                          )}
+                          {applied && <span className="text-xs" style={{ color: ar.athleteColor }}>✓ Lagt til</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {replaceCount > 0 && unapplied.length > 0 && (
+                    <button
+                      onClick={applyAllChanges}
+                      disabled={awayApplying}
+                      className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
+                      style={{ backgroundColor: '#f59e0b18', color: '#b45309', border: '1px solid #f59e0b40' }}
+                    >
+                      {awayApplying ? 'Gjennomfører…' : `Gjennomfør alle (${unapplied.length} endring${unapplied.length !== 1 ? 'er' : ''})`}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <button onClick={reset} className="mt-4 text-xs opacity-40 hover:opacity-80" style={{ color: 'var(--text)' }}>
+            Avbryt
+          </button>
         </div>
       )}
 
