@@ -18,9 +18,6 @@ function cacheKey(slug: string, date: string) {
 function activityIdsKey(slug: string) {
   return `activity-ids:${slug}`;
 }
-function seenActivityIdsKey(slug: string) {
-  return `seen-activity-ids:${slug}`;
-}
 function isAfter06() {
   return new Date().getHours() >= 6;
 }
@@ -53,18 +50,6 @@ function getStoredActivityIds(slug: string): number[] {
 function saveActivityIds(slug: string, ids: number[]) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(activityIdsKey(slug), JSON.stringify(ids));
-}
-function getSeenActivityIds(slug: string): number[] {
-  if (typeof window === 'undefined') return [];
-  try { return JSON.parse(localStorage.getItem(seenActivityIdsKey(slug)) ?? '[]'); }
-  catch { return []; }
-}
-function markActivitySeen(slug: string, id: number) {
-  if (typeof window === 'undefined') return;
-  const seen = getSeenActivityIds(slug);
-  if (!seen.includes(id)) {
-    localStorage.setItem(seenActivityIdsKey(slug), JSON.stringify([...seen, id]));
-  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -177,45 +162,6 @@ function AiPushPanel({ athlete, periodLabel, workouts, onClose, onAdded }: AiPus
   );
 }
 
-// ─── Øktoppsummering ──────────────────────────────────────────────────────────
-
-interface ActivitySummaryProps {
-  activity: Activity;
-  aiSummary?: string;
-  color: string;
-  onClose: () => void;
-}
-
-function ActivitySummaryCard({ activity, aiSummary, color, onClose }: ActivitySummaryProps) {
-  return (
-    <div
-      className="rounded-xl overflow-hidden"
-      style={{ border: `1px solid ${color}30`, backgroundColor: `${color}08` }}
-    >
-      <div
-        className="flex items-center justify-between px-3 py-2"
-        style={{ borderBottom: `1px solid ${color}15`, backgroundColor: `${color}10` }}
-      >
-        <span className="text-xs font-semibold" style={{ color }}>
-          {sportIcon(activity.type)} Ny økt registrert
-        </span>
-        <button onClick={onClose} className="text-xs opacity-40 hover:opacity-70" style={{ color: 'var(--text)' }}>✕</button>
-      </div>
-      <div className="px-3 py-2 space-y-1.5" style={{ fontSize: 11 }}>
-        <p className="font-medium" style={{ color: 'var(--text)' }}>{activity.name}</p>
-        <div className="flex flex-wrap gap-2 opacity-70" style={{ color: 'var(--text)' }}>
-          <span>{fmtDur(activity.moving_time)}</span>
-          {activity.distance > 0 && <span>{(activity.distance / 1000).toFixed(1)} km</span>}
-          {activity.icu_training_load != null && <span>{Math.round(activity.icu_training_load)} TSS</span>}
-          {activity.average_heartrate != null && <span>{Math.round(activity.average_heartrate)} bpm</span>}
-        </div>
-        {aiSummary && (
-          <p className="leading-snug opacity-75 pt-0.5" style={{ color: 'var(--text)' }}>{aiSummary}</p>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ─── Per-athlete panel ────────────────────────────────────────────────────────
 
@@ -238,24 +184,14 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
   const [pushResult, setPushResult] = useState<string | null>(null);
   const [aiPushWorkouts, setAiPushWorkouts] = useState<WorkoutEvent[] | null>(null);
   const [aiPushLabel, setAiPushLabel] = useState('');
-  const [newActivity, setNewActivity] = useState<Activity | null>(null);
-  const [activitySummaryDismissed, setActivitySummaryDismissed] = useState(false);
+  const [todaySummaryExpanded, setTodaySummaryExpanded] = useState(false);
 
   const today = todayStr();
   const yesterday = yesterdayStr();
 
   const todayEvents = events.filter((e) => e.start_date_local.slice(0, 10) === today);
+  const todayActivities = activities.filter((a) => a.start_date_local.slice(0, 10) === today);
   const yesterdayActs = activities.filter((a) => a.start_date_local.slice(0, 10) === yesterday);
-
-  // Detect new activities
-  useEffect(() => {
-    if (activities.length === 0) return;
-    const seen = getSeenActivityIds(athlete.slug);
-    const unseen = activities.filter((a) => !seen.includes(a.id));
-    if (unseen.length > 0) {
-      setNewActivity(unseen[0]);
-    }
-  }, [activities, athlete.slug]);
 
   function buildApiBody(extra: Record<string, unknown> = {}) {
     if (athlete.slug === 'mathias' || athlete.slug === 'karoline') {
@@ -419,19 +355,6 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
       {/* Body */}
       <div className="flex flex-col flex-1 px-3 py-3 gap-2 text-xs">
 
-        {/* Ny økt-oppsummering */}
-        {newActivity && !activitySummaryDismissed && (
-          <ActivitySummaryCard
-            activity={newActivity}
-            aiSummary={analysis?.activitySummary ?? undefined}
-            color={color}
-            onClose={() => {
-              setActivitySummaryDismissed(true);
-              markActivitySeen(athlete.slug, newActivity.id);
-            }}
-          />
-        )}
-
         {/* I GÅR */}
         <div>
           <span className="uppercase tracking-wider opacity-40" style={{ fontSize: 9 }}>I går</span>
@@ -456,7 +379,46 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
         {/* I DAG */}
         <div>
           <span className="uppercase tracking-wider opacity-40" style={{ fontSize: 9 }}>I dag</span>
-          {todayEvents.length > 0 ? (
+          {todayActivities.length > 0 ? (
+            // Gjennomførte økter i dag
+            <ul className="mt-0.5 space-y-1">
+              {todayActivities.map((a, i) => (
+                <li key={i}>
+                  <div className="flex items-center gap-1">
+                    <span className="flex-shrink-0">{sportIcon(a.type)}</span>
+                    <span className="truncate font-medium" style={{ color }}>✓ {a.name}</span>
+                    <span className="opacity-50 flex-shrink-0">· {fmtDur(a.moving_time)}</span>
+                    {a.icu_training_load != null && (
+                      <span className="opacity-50 flex-shrink-0">· {Math.round(a.icu_training_load)} TSS</span>
+                    )}
+                    {athlete.hasAI && (analysis?.activitySummary || loading) && (
+                      <button
+                        onClick={() => setTodaySummaryExpanded((v) => !v)}
+                        className="flex-shrink-0 opacity-40 hover:opacity-80 transition-opacity ml-1"
+                        style={{ color }}
+                      >
+                        {todaySummaryExpanded ? '▴' : '▾'}
+                      </button>
+                    )}
+                  </div>
+                  {todaySummaryExpanded && (
+                    <div className="mt-1 pl-4 space-y-1">
+                      {loading && <p className="opacity-40 animate-pulse">Henter oppsummering...</p>}
+                      {analysis?.activitySummary && !loading && (
+                        <>
+                          <p className="opacity-75 leading-snug">{analysis.activitySummary}</p>
+                          {analysis.nutritionAdvice && (
+                            <p className="opacity-60 leading-snug">🍽️ {analysis.nutritionAdvice}</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : todayEvents.length > 0 ? (
+            // Planlagte, ikke gjennomført
             <ul className="mt-0.5 space-y-0.5">
               {todayEvents.map((e, i) => (
                 <li key={i} className="flex items-center gap-1">
@@ -492,12 +454,11 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
               style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase' }}
             >
               <span style={{ color }}>▸</span>
-              {loading ? 'Analyserer...' : `KI-analyse ${expanded ? '▴' : '▾'}`}
+              {loading ? 'Analyserer...' : `Formstatus ${expanded ? '▴' : '▾'}`}
             </button>
 
             {expanded && !loading && analysis && (
               <div className="space-y-1.5">
-                <p className="opacity-75 leading-snug">🍽️ {analysis.nutritionAdvice}</p>
                 <p className="opacity-65 leading-snug">{analysis.summary}</p>
                 {analysis.weatherNote && (
                   <p className="opacity-65 leading-snug">🌧️ {analysis.weatherNote}</p>
@@ -558,7 +519,7 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
               className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
               style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
             >
-              {loading ? '↻ analyserer...' : '↻ analyser på nytt'}
+              {loading ? '↻ analyserer...' : '↻ Analyser formstatus'}
             </button>
           )}
 
@@ -571,7 +532,7 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
                 className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
                 style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
               >
-                {pushLoading ? '↑ pusher...' : '↑ Generer og push uke'}
+                {pushLoading ? '↑ pusher...' : '↑ Push uke'}
               </button>
               <button
                 onClick={() => handlePush('month')}
@@ -579,7 +540,7 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
                 className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
                 style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
               >
-                ↑ Generer og push måned
+                ↑ Push måned
               </button>
             </>
           )}

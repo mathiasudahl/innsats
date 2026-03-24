@@ -248,12 +248,12 @@ Dato i dag: ${todayStr}
   prompt += `
 Instruksjoner:
 1. weekType: Bruk programfasen direkte fra konteksten om tilgjengelig (f.eks. "Build 1: Restitusjon"). Ellers bestem basert på kommende plan. Maks 4 ord.
-2. summary: Kommenter gårsdagens økt KORT (maks 2 setninger). Hvis hviledag: si noe positivt om hvile og hva som venter. ALDRI kall hviledag et "avvik fra plan" — hvile ER planen.
-3. nutritionAdvice: Gi en KORT kostholdsanbefaling for i dag (maks 1 setning). Fokuser på praktiske tips.
+2. summary: Vurder formstatus basert på CTL, ATL, TSB, HRV og søvn. Er utøveren klar til å trene hardt, bør de dempe ned, eller er formen stigende/dalende? Maks 2 setninger, spesifikt og direkte — ingen generelle motivasjonsfraser.
+3. nutritionAdvice: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da ett konkret kostholdsråd knyttet direkte til den spesifikke økten (restitusjon, glykogen, protein osv.). Null ellers.
 4. weatherNote: Bare hvis regnvær (symbol inneholder "rain", "sleet", "shower") eller sterk vind (>10 m/s) treffer planlagt utendørsøkt (Run/Ride). Null ellers.
 5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS (ikke hviledag). Hviledag = adaptWeek=false.
 6. adaptSuggestion: Konkret forslag kun om adaptWeek=true.
-7. activitySummary: Gi en konkret oppsummering av den siste gjennomførte økten (2-3 setninger om intensitet, kvalitet og hva som gikk bra/dårlig). Null hvis ingen aktivitet siste 24t.
+7. activitySummary: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da en konkret oppsummering av den (2-3 setninger om intensitet, kvalitet, hva som gikk bra/dårlig basert på TSS, HF og varighet). Null ellers.
 
 Returner BARE dette JSON-objektet:
 {
