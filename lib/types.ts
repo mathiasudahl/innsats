@@ -127,6 +127,7 @@ export interface DailyAnalysis {
   date: string;
   athleteSlug: string;
   weekType: string;
+  weekTypeSource?: "program" | "ai";
   summary: string;
   nutritionAdvice: string;
   weatherNote?: string;

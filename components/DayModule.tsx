@@ -242,7 +242,6 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
       return;
     }
     if (!isAfter06()) return;
-    if (activities.length === 0) return;
     runAnalysis(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -341,7 +340,7 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
               className="text-xs px-2 py-0.5 rounded-full"
               style={{ backgroundColor: `${color}15`, color: `${color}cc` }}
             >
-              {analysis.weekType}
+              {analysis.weekTypeSource === 'ai' ? `KI-vurdert: ${analysis.weekType}` : analysis.weekType}
             </span>
           )}
         </div>

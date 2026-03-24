@@ -206,6 +206,32 @@ Dato i dag: ${todayStr}
     prompt += "\n";
   }
 
+  if (!programCtx && activities.length > 0) {
+    // Group by ISO week for context on whether this week is heavy/light
+    const weekTotals: Record<string, { tss: number; count: number }> = {};
+    for (const a of activities) {
+      const d = new Date(a.start_date_local);
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const wk = mon.toISOString().slice(0, 10);
+      if (!weekTotals[wk]) weekTotals[wk] = { tss: 0, count: 0 };
+      weekTotals[wk].tss += a.icu_training_load ?? 0;
+      weekTotals[wk].count += 1;
+    }
+    const weekLines = Object.entries(weekTotals)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([wk, v]) => `uke fra ${wk}: ${v.count} økter, ${Math.round(v.tss)} TSS`);
+    prompt += "\nUkesvolum siste 14 dager:\n" + weekLines.map((l) => `- ${l}`).join("\n") + "\n";
+
+    prompt += "\nSiste aktiviteter (nyeste først):\n";
+    for (const a of [...activities].reverse().slice(0, 10)) {
+      const parts = [a.start_date_local.slice(0, 10), a.type, a.name, formatTime(a.moving_time)];
+      if (a.distance > 0) parts.push(formatDistance(a.distance));
+      if (a.icu_training_load) parts.push(`${Math.round(a.icu_training_load)} TSS`);
+      prompt += `- ${parts.join(" | ")}\n`;
+    }
+  }
+
   if (yesterdayActivities.length > 0) {
     prompt += "\nGårsdagens gjennomførte økt(er):\n";
     for (const a of yesterdayActivities) {
@@ -247,10 +273,10 @@ Dato i dag: ${todayStr}
 
   prompt += `
 Instruksjoner:
-1. weekType: Bruk programfasen direkte fra konteksten om tilgjengelig (f.eks. "Build 1: Restitusjon"). Ellers bestem basert på kommende plan. Maks 4 ord.
-2. summary: Vurder formstatus basert på CTL, ATL, TSB, HRV og søvn. Er utøveren klar til å trene hardt, bør de dempe ned, eller er formen stigende/dalende? Maks 2 setninger, spesifikt og direkte — ingen generelle motivasjonsfraser.
+1. weekType: Bruk programfasen direkte fra konteksten om tilgjengelig (f.eks. "Build 1: Restitusjon"). Ellers: sammenlign denne ukens planlagte TSS og antall økter med ukesvolum-historikken ovenfor. Er denne uken vesentlig tyngre enn snittet → "Belastningsuke". Lettere enn snittet → "Restitusjon". Omtrent likt → "Normaluke" eller "Basetrening". Aldri tom streng — alltid 1–4 ord. weekTypeSource: sett "program" om du brukte programkontekst, ellers "ai".
+2. summary: Én setning maks. Basert kun på CTL/ATL/TSB/HRV — ikke vær, ikke motivasjon. Eksempel: "TSB på +12 og stigende CTL — klar for hard økt." eller "ATL høy etter tung uke, TSB negativ — dempe ned i dag."
 3. nutritionAdvice: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da ett konkret kostholdsråd knyttet direkte til den spesifikke økten (restitusjon, glykogen, protein osv.). Null ellers.
-4. weatherNote: Bare hvis regnvær (symbol inneholder "rain", "sleet", "shower") eller sterk vind (>10 m/s) treffer planlagt utendørsøkt (Run/Ride). Null ellers.
+4. weatherNote: Bare hvis regnvær (symbol inneholder "rain", "sleet", "shower") treffer planlagt løpeøkt (Run) utendørs, ELLER sterk vind (>10 m/s) treffer planlagt utendørs sykkeltur uten watt-struktur (dvs. rolig tur/langtur, ikke intervaller). Watt-baserte sykkeltreninger (terskel, intervaller) påvirkes ikke av vind — ikke kommenter vær på disse. Null ellers.
 5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS (ikke hviledag). Hviledag = adaptWeek=false.
 6. adaptSuggestion: Konkret forslag kun om adaptWeek=true.
 7. activitySummary: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da en konkret oppsummering av den (2-3 setninger om intensitet, kvalitet, hva som gikk bra/dårlig basert på TSS, HF og varighet). Null ellers.
@@ -260,6 +286,7 @@ Returner BARE dette JSON-objektet:
   "date": "${todayStr}",
   "athleteSlug": "${athleteSlug}",
   "weekType": "Restitusjonsuke",
+  "weekTypeSource": "ai",
   "summary": "Kort kommentar om i går",
   "nutritionAdvice": "Konkret anbefaling for i dag",
   "weatherNote": null,

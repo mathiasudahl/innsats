@@ -54,13 +54,13 @@ export async function POST(req: NextRequest) {
 
   const client = makeAnthropic(anthropicKey);
   const t = today();
-  const twoDaysAgo = daysAgo(2);
+  const fourteenDaysAgo = daysAgo(14);
   const yesterday = daysAgo(1);
 
   const weekAhead = daysFromNow(7);
 
   const [activitiesRes, eventsRes, futureEventsRes, wellnessRes, weather] = await Promise.allSettled([
-    fetchActivities(athleteId, apiKey, twoDaysAgo, t, 5),
+    fetchActivities(athleteId, apiKey, fourteenDaysAgo, t, 14),
     fetchEvents(athleteId, apiKey, t, t),
     fetchEvents(athleteId, apiKey, t, weekAhead),
     fetchWellness(athleteId, apiKey, yesterday, t),
