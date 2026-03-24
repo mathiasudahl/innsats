@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { WorkoutEvent } from "@/lib/types";
 
-const ATHLETE_IDS: Record<string, string> = {
+const PRESET_ATHLETE_IDS: Record<string, string> = {
   mathias: "i303639",
   karoline: "i456432",
 };
@@ -11,11 +11,13 @@ const ATHLETE_IDS: Record<string, string> = {
 interface AddToIntervalsButtonProps {
   workout: WorkoutEvent;
   athleteSlug: string;
+  athleteId?: string;
+  apiKey?: string;
   color: string;
   onAdded: (url: string) => void;
 }
 
-export function AddToIntervalsButton({ workout, athleteSlug, color, onAdded }: AddToIntervalsButtonProps) {
+export function AddToIntervalsButton({ workout, athleteSlug, athleteId, apiKey, color, onAdded }: AddToIntervalsButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,10 +25,14 @@ export function AddToIntervalsButton({ workout, athleteSlug, color, onAdded }: A
     setLoading(true);
     setError(null);
     try {
+      const body = athleteId && apiKey
+        ? { athleteId, apiKey, event: workout }
+        : { athleteSlug, event: workout };
+
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ athleteSlug, event: workout }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -35,8 +41,8 @@ export function AddToIntervalsButton({ workout, athleteSlug, color, onAdded }: A
       const created: WorkoutEvent = await res.json();
       const dateStr = created.start_date_local ?? workout.start_date_local ?? "";
       const date = dateStr.slice(0, 10);
-      const athleteId = ATHLETE_IDS[athleteSlug];
-      onAdded(`https://intervals.icu/athlete/${athleteId}/activities?w=${date}`);
+      const resolvedAthleteId = athleteId ?? PRESET_ATHLETE_IDS[athleteSlug] ?? athleteSlug;
+      onAdded(`https://intervals.icu/athlete/${resolvedAthleteId}/activities?w=${date}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ukjent feil");
       setLoading(false);

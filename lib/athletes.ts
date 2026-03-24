@@ -1,4 +1,4 @@
-import type { Athlete } from "./types";
+import type { Athlete, UserConfig } from "./types";
 
 export const ATHLETES: Record<"mathias" | "karoline", Athlete> = {
   mathias: {
@@ -20,4 +20,14 @@ export const ATHLETES: Record<"mathias" | "karoline", Athlete> = {
 
 export function getAthlete(slug: "mathias" | "karoline"): Athlete {
   return ATHLETES[slug];
+}
+
+export function athleteFromConfig(config: UserConfig): Athlete {
+  return {
+    id: config.athleteId,
+    apiKey: config.apiKey,
+    name: config.name,
+    color: "#7c3aed",
+    slug: "mathias", // placeholder slug, not used for routing in custom mode
+  };
 }

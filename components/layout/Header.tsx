@@ -49,6 +49,15 @@ export function Header() {
               {symbolToEmoji(weather.symbol)} {Math.round(weather.temperature)}°C
             </span>
           )}
+          <Link
+            href="/login"
+            title="Innstillinger"
+            aria-label="Innstillinger"
+            style={{ color: "var(--text-subtle)", fontSize: "1.1rem", lineHeight: 1, opacity: 0.6 }}
+            className="hover:opacity-100 transition-opacity"
+          >
+            ⚙
+          </Link>
           <button
             onClick={toggle}
             className="text-lg"

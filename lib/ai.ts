@@ -14,6 +14,10 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+export function makeAnthropic(apiKey?: string): Anthropic {
+  return new Anthropic({ apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY });
+}
+
 export function buildSystemPrompt(): string {
   const now = new Date();
   const todayIso = now.toISOString().slice(0, 10);
@@ -249,6 +253,7 @@ Instruksjoner:
 4. weatherNote: Bare hvis regnvær (symbol inneholder "rain", "sleet", "shower") eller sterk vind (>10 m/s) treffer planlagt utendørsøkt (Run/Ride). Null ellers.
 5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS (ikke hviledag). Hviledag = adaptWeek=false.
 6. adaptSuggestion: Konkret forslag kun om adaptWeek=true.
+7. activitySummary: Gi en konkret oppsummering av den siste gjennomførte økten (2-3 setninger om intensitet, kvalitet og hva som gikk bra/dårlig). Null hvis ingen aktivitet siste 24t.
 
 Returner BARE dette JSON-objektet:
 {
@@ -260,6 +265,7 @@ Returner BARE dette JSON-objektet:
   "weatherNote": null,
   "adaptWeek": false,
   "adaptSuggestion": null,
+  "activitySummary": null,
   "generatedAt": "${new Date().toISOString()}"
 }`;
 

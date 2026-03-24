@@ -3,21 +3,24 @@ import { createEvent, updateEvent, deleteEvent, deleteEventsForDate } from "@/li
 import { getAthlete } from "@/lib/athletes";
 import { today } from "@/lib/date-utils";
 
-function getAthleteFromSlug(slug: string) {
-  if (slug !== "mathias" && slug !== "karoline") {
-    return null;
+function resolveAthlete(body: { athleteSlug?: string; athleteId?: string; apiKey?: string }) {
+  if (body.athleteId && body.apiKey) {
+    return { id: body.athleteId, apiKey: body.apiKey };
   }
-  return getAthlete(slug);
+  if (body.athleteSlug === "mathias" || body.athleteSlug === "karoline") {
+    const a = getAthlete(body.athleteSlug);
+    return { id: a.id, apiKey: a.apiKey };
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug, event } = body;
-  const athlete = getAthleteFromSlug(athleteSlug);
+  const athlete = resolveAthlete(body);
   if (!athlete) return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
 
   try {
-    const result = await createEvent(athlete.id, athlete.apiKey, event);
+    const result = await createEvent(athlete.id, athlete.apiKey, body.event);
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -26,12 +29,11 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug, eventId, event } = body;
-  const athlete = getAthleteFromSlug(athleteSlug);
+  const athlete = resolveAthlete(body);
   if (!athlete) return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
 
   try {
-    const result = await updateEvent(athlete.id, athlete.apiKey, eventId, event);
+    const result = await updateEvent(athlete.id, athlete.apiKey, body.eventId, body.event);
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -40,16 +42,15 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug, eventId, sickDay } = body;
-  const athlete = getAthleteFromSlug(athleteSlug);
+  const athlete = resolveAthlete(body);
   if (!athlete) return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
 
   try {
-    if (sickDay) {
+    if (body.sickDay) {
       const count = await deleteEventsForDate(athlete.id, athlete.apiKey, today());
       return NextResponse.json({ deleted: count });
     }
-    await deleteEvent(athlete.id, athlete.apiKey, eventId);
+    await deleteEvent(athlete.id, athlete.apiKey, body.eventId);
     return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

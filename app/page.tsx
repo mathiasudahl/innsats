@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useRouter } from 'next/navigation';
 import { Calendar } from '@/components/Calendar';
 import { DayModule } from '@/components/DayModule';
 import { WorkoutWizard, type SuccessBanner, type WorkoutPreview } from '@/components/WorkoutWizard';
-import type { Activity, WorkoutEvent, WeatherData, WeatherForecast } from '@/lib/types';
+import type { Activity, WorkoutEvent, WeatherData, WeatherForecast, UserConfig } from '@/lib/types';
 import type { OfflineWorkout } from '@/lib/offline-program';
 
 function todayStr() {
@@ -21,7 +22,7 @@ function daysFromNowStr(n: number) {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchAthleteData(slug: 'mathias' | 'karoline') {
+async function fetchAthleteDataPreset(slug: 'mathias' | 'karoline') {
   const oldest = daysAgoStr(7);
   const newest = todayStr();
   const eventsNewest = daysFromNowStr(14);
@@ -29,6 +30,22 @@ async function fetchAthleteData(slug: 'mathias' | 'karoline') {
   const [activitiesRes, eventsRes] = await Promise.allSettled([
     fetch(`/api/intervals?athlete=${slug}&type=activities&oldest=${oldest}&newest=${newest}&limit=50`, { cache: 'no-store' }).then((r) => r.json()),
     fetch(`/api/intervals?athlete=${slug}&type=events&oldest=${newest}&newest=${eventsNewest}`, { cache: 'no-store' }).then((r) => r.json()),
+  ]);
+
+  return {
+    activities: (activitiesRes.status === 'fulfilled' ? activitiesRes.value : []) as Activity[],
+    events: (eventsRes.status === 'fulfilled' ? eventsRes.value : []) as WorkoutEvent[],
+  };
+}
+
+async function fetchAthleteDataCustom(config: UserConfig) {
+  const oldest = daysAgoStr(7);
+  const newest = todayStr();
+  const eventsNewest = daysFromNowStr(14);
+
+  const [activitiesRes, eventsRes] = await Promise.allSettled([
+    fetch(`/api/intervals?athleteId=${encodeURIComponent(config.athleteId)}&apiKey=${encodeURIComponent(config.apiKey)}&type=activities&oldest=${oldest}&newest=${newest}&limit=50`, { cache: 'no-store' }).then((r) => r.json()),
+    fetch(`/api/intervals?athleteId=${encodeURIComponent(config.athleteId)}&apiKey=${encodeURIComponent(config.apiKey)}&type=events&oldest=${newest}&newest=${eventsNewest}`, { cache: 'no-store' }).then((r) => r.json()),
   ]);
 
   return {
@@ -85,30 +102,60 @@ function CalendarSkeleton() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
+  const router = useRouter();
+  const [config, setConfig] = useState<UserConfig | null>(null);
+  const [ready, setReady] = useState(false);
+
   const [mathiasActivities, setMathiasActivities] = useState<Activity[]>([]);
   const [mathiasEvents, setMathiasEvents] = useState<WorkoutEvent[]>([]);
   const [karolineActivities, setKarolineActivities] = useState<Activity[]>([]);
   const [karolineEvents, setKarolineEvents] = useState<WorkoutEvent[]>([]);
+  const [customActivities, setCustomActivities] = useState<Activity[]>([]);
+  const [customEvents, setCustomEvents] = useState<WorkoutEvent[]>([]);
   const [calLoading, setCalLoading] = useState(true);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [forecast, setForecast] = useState<WeatherForecast>({});
   const [success, setSuccess] = useState<SuccessBanner | null>(null);
   const [preview, setPreview] = useState<WorkoutPreview | null>(null);
 
+  // Read config from localStorage
+  useEffect(() => {
+    const raw = localStorage.getItem('user-config');
+    if (!raw) {
+      router.push('/login');
+      return;
+    }
+    try {
+      setConfig(JSON.parse(raw));
+    } catch {
+      router.push('/login');
+      return;
+    }
+    setReady(true);
+  }, [router]);
+
   const refresh = useCallback(async () => {
+    if (!config) return;
     setCalLoading(true);
-    const [m, k] = await Promise.all([
-      fetchAthleteData('mathias'),
-      fetchAthleteData('karoline'),
-    ]);
-    setMathiasActivities(m.activities);
-    setMathiasEvents(m.events);
-    setKarolineActivities(k.activities);
-    setKarolineEvents(k.events);
+    if (config.mode === 'preset') {
+      const [m, k] = await Promise.all([
+        fetchAthleteDataPreset('mathias'),
+        fetchAthleteDataPreset('karoline'),
+      ]);
+      setMathiasActivities(m.activities);
+      setMathiasEvents(m.events);
+      setKarolineActivities(k.activities);
+      setKarolineEvents(k.events);
+    } else {
+      const data = await fetchAthleteDataCustom(config);
+      setCustomActivities(data.activities);
+      setCustomEvents(data.events);
+    }
     setCalLoading(false);
-  }, []);
+  }, [config]);
 
   useEffect(() => {
+    if (!ready || !config) return;
     refresh();
     fetch('/api/weather').then((r) => r.json()).then((d) => {
       if (!d.error) {
@@ -116,7 +163,7 @@ export default function Home() {
         setForecast(d.forecast ?? {});
       }
     }).catch(() => {});
-  }, [refresh]);
+  }, [ready, config, refresh]);
 
   async function handleAddOfflineWorkout(
     slug: 'mathias' | 'karoline',
@@ -124,8 +171,10 @@ export default function Home() {
     date: string,
     replace: boolean,
   ) {
+    if (!config) return;
+    const events = slug === 'mathias' ? mathiasEvents : karolineEvents;
+
     if (replace) {
-      const events = slug === 'mathias' ? mathiasEvents : karolineEvents;
       const ride = events.find(
         (e) => e.start_date_local.slice(0, 10) === date && e.type === 'Ride',
       );
@@ -160,15 +209,22 @@ export default function Home() {
     refresh();
   }
 
+  if (!ready || !config) return null;
+
+  const isPreset = config.mode === 'preset';
+
   return (
     <div className="space-y-4">
       {/* Day module */}
       <Suspense fallback={null}>
         <DayModule
+          config={config}
           mathiasActivities={mathiasActivities}
           mathiasEvents={mathiasEvents}
           karolineActivities={karolineActivities}
           karolineEvents={karolineEvents}
+          customActivities={customActivities}
+          customEvents={customEvents}
           weather={weather}
           onRefresh={refresh}
         />
@@ -177,7 +233,7 @@ export default function Home() {
       {/* Calendar */}
       {calLoading ? (
         <CalendarSkeleton />
-      ) : (
+      ) : isPreset ? (
         <Calendar
           mathiasActivities={mathiasActivities}
           mathiasEvents={mathiasEvents}
@@ -189,9 +245,21 @@ export default function Home() {
           onRefresh={refresh}
           onAddOfflineWorkout={handleAddOfflineWorkout}
         />
+      ) : (
+        <Calendar
+          mathiasActivities={customActivities}
+          mathiasEvents={customEvents}
+          karolineActivities={[]}
+          karolineEvents={[]}
+          preview={preview}
+          weather={weather}
+          forecast={forecast}
+          onRefresh={refresh}
+          onAddOfflineWorkout={handleAddOfflineWorkout}
+        />
       )}
 
-      {/* Success banner — mellom kalender og wizard */}
+      {/* Success banner */}
       {success && (
         <SuccessBannerView banner={success} onClose={() => setSuccess(null)} />
       )}
@@ -202,7 +270,7 @@ export default function Home() {
         style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}
       >
         <div className="max-w-xl">
-          <WorkoutWizard onSuccess={handleSuccess} onPreview={setPreview} />
+          <WorkoutWizard config={config} onSuccess={handleSuccess} onPreview={setPreview} />
         </div>
       </div>
     </div>

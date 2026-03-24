@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { parseWorkoutFromText } from '@/lib/parse-workout';
 import { AddToIntervalsButton } from '@/components/ai/AddToIntervalsButton';
-import type { WorkoutEvent } from '@/lib/types';
+import type { WorkoutEvent, UserConfig } from '@/lib/types';
 
 type AthleteSlug = 'mathias' | 'karoline';
 type Step = 'action' | 'variant' | 'athlete' | 'sport' | 'result';
@@ -256,11 +256,12 @@ function ResultCard({ workout, athleteColor, athleteSlug, displayText, onAdded, 
 // ─── Wizard ──────────────────────────────────────────────────────────────────
 
 interface Props {
+  config: UserConfig;
   onSuccess: (banner: SuccessBanner) => void;
   onPreview: (preview: WorkoutPreview | null) => void;
 }
 
-export function WorkoutWizard({ onSuccess, onPreview }: Props) {
+export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
   const [step, setStep] = useState<Step>('action');
   const [action, setAction] = useState<string | null>(null);
   const [actionLabel, setActionLabel] = useState<string | null>(null);
@@ -286,16 +287,33 @@ export function WorkoutWizard({ onSuccess, onPreview }: Props) {
     onPreview(null);
   }
 
+  const defaultSlug: AthleteSlug = config.mode === 'preset' ? 'mathias' : 'mathias'; // placeholder for custom
+
   function pickAction(id: string, label: string) {
     setAction(id);
     setActionLabel(label);
-    setStep(id === 'extra' ? 'variant' : 'athlete');
+    if (config.mode !== 'preset') {
+      // Skip athlete picker in custom mode
+      setAthleteSlug(defaultSlug);
+      if (id === 'sick') {
+        handleSickDay(defaultSlug);
+      } else {
+        setStep(id === 'extra' ? 'variant' : 'sport');
+      }
+    } else {
+      setStep(id === 'extra' ? 'variant' : 'athlete');
+    }
   }
 
   function pickVariant(variantId: string, label: string) {
     setAction(variantId);
     setVariantLabel(label);
-    setStep('athlete');
+    if (config.mode !== 'preset') {
+      setAthleteSlug(defaultSlug);
+      setStep('sport');
+    } else {
+      setStep('athlete');
+    }
   }
 
   function pickAthlete(slug: AthleteSlug) {
@@ -313,6 +331,19 @@ export function WorkoutWizard({ onSuccess, onPreview }: Props) {
     fetchAI(athleteSlug!, action!, sportId);
   }
 
+  function buildApiBody(slug: AthleteSlug, extra: Record<string, unknown> = {}) {
+    if (config.mode === 'preset') {
+      return { athleteSlug: slug, ...extra };
+    }
+    return {
+      athleteId: config.athleteId,
+      apiKey: config.apiKey,
+      anthropicKey: config.anthropicKey,
+      athleteName: config.name,
+      ...extra,
+    };
+  }
+
   async function fetchAI(slug: AthleteSlug, actionId: string, sport: string) {
     setLoading(true);
     setError(null);
@@ -322,7 +353,7 @@ export function WorkoutWizard({ onSuccess, onPreview }: Props) {
       const res = await fetch('/api/quickactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteSlug: slug, action: actionId, sport }),
+        body: JSON.stringify(buildApiBody(slug, { action: actionId, sport })),
       });
       if (!res.ok) throw new Error('Feil fra server');
       const data = await res.json();
@@ -343,16 +374,21 @@ export function WorkoutWizard({ onSuccess, onPreview }: Props) {
       const res = await fetch('/api/events', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteSlug: slug, sickDay: true }),
+        body: JSON.stringify(buildApiBody(slug, { sickDay: true })),
       });
       if (!res.ok) throw new Error('Feil fra server');
       const data = await res.json();
-      const color = slug === 'mathias' ? '#16a34a' : '#2563eb';
-      const athleteId = slug === 'mathias' ? 'i303639' : 'i456432';
+      const color = config.mode === 'preset'
+        ? (slug === 'mathias' ? '#16a34a' : '#2563eb')
+        : '#7c3aed';
+      const presetIds: Record<string, string> = { mathias: 'i303639', karoline: 'i456432' };
+      const resolvedAthleteId = config.mode === 'preset'
+        ? presetIds[slug]
+        : config.athleteId;
       const todayStr = new Date().toISOString().slice(0, 10);
       onSuccess({
         label: `${data.deleted} økt${data.deleted !== 1 ? 'er' : ''} fjernet for i dag`,
-        url: `https://intervals.icu/athlete/${athleteId}/activities?w=${todayStr}`,
+        url: `https://intervals.icu/athlete/${resolvedAthleteId}/activities?w=${todayStr}`,
         color,
       });
       reset();

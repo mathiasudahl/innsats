@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { Activity, WorkoutEvent, DailyAnalysis, WeatherData } from '@/lib/types';
+import type { Activity, WorkoutEvent, DailyAnalysis, WeatherData, UserConfig } from '@/lib/types';
+import { AddToIntervalsButton } from '@/components/ai/AddToIntervalsButton';
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 
@@ -16,6 +17,9 @@ function cacheKey(slug: string, date: string) {
 }
 function activityIdsKey(slug: string) {
   return `activity-ids:${slug}`;
+}
+function seenActivityIdsKey(slug: string) {
+  return `seen-activity-ids:${slug}`;
 }
 function isAfter06() {
   return new Date().getHours() >= 6;
@@ -50,6 +54,18 @@ function saveActivityIds(slug: string, ids: number[]) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(activityIdsKey(slug), JSON.stringify(ids));
 }
+function getSeenActivityIds(slug: string): number[] {
+  if (typeof window === 'undefined') return [];
+  try { return JSON.parse(localStorage.getItem(seenActivityIdsKey(slug)) ?? '[]'); }
+  catch { return []; }
+}
+function markActivitySeen(slug: string, id: number) {
+  if (typeof window === 'undefined') return;
+  const seen = getSeenActivityIds(slug);
+  if (!seen.includes(id)) {
+    localStorage.setItem(seenActivityIdsKey(slug), JSON.stringify([...seen, id]));
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,27 +97,137 @@ function fmtDur(s: number) {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface DayModuleProps {
+  config: UserConfig;
   mathiasActivities: Activity[];
   mathiasEvents: WorkoutEvent[];
   karolineActivities: Activity[];
   karolineEvents: WorkoutEvent[];
+  customActivities: Activity[];
+  customEvents: WorkoutEvent[];
   weather: WeatherData | null;
   onRefresh: () => void;
+}
+
+interface AthleteInfo {
+  slug: string;
+  name: string;
+  color: string;
+  hasProgram: boolean;
+  hasAI: boolean;
+  anthropicKey?: string;
+  athleteId?: string;
+  apiKey?: string;
+}
+
+// ─── AI Push forslag ──────────────────────────────────────────────────────────
+
+interface AiPushPanelProps {
+  athlete: AthleteInfo;
+  periodLabel: string;
+  workouts: WorkoutEvent[];
+  onClose: () => void;
+  onAdded: () => void;
+}
+
+function AiPushPanel({ athlete, periodLabel, workouts, onClose, onAdded }: AiPushPanelProps) {
+  const sportLabels: Record<string, string> = {
+    Run: 'Løp', Ride: 'Sykkel', Swim: 'Svøm',
+    WeightTraining: 'Styrke', NordicSki: 'Ski', Rowing: 'Roing',
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-xl overflow-hidden"
+      style={{ border: `1px solid ${athlete.color}25`, backgroundColor: `${athlete.color}06` }}
+    >
+      <div
+        className="flex items-center justify-between px-3 py-2"
+        style={{ borderBottom: `1px solid ${athlete.color}15` }}
+      >
+        <span className="text-xs font-medium" style={{ color: athlete.color }}>
+          Forslag: {periodLabel}
+        </span>
+        <button onClick={onClose} className="text-xs opacity-40 hover:opacity-70" style={{ color: 'var(--text)' }}>✕</button>
+      </div>
+      <div className="px-3 py-2 space-y-2">
+        {workouts.map((w, i) => (
+          <div key={i} className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <span style={{ fontSize: 12 }}>{sportIcon(w.type)}</span>
+              <div className="min-w-0">
+                <span className="text-xs font-medium truncate block" style={{ color: 'var(--text)' }}>{w.name}</span>
+                <span className="text-xs opacity-50" style={{ fontSize: 10 }}>
+                  {w.start_date_local.slice(0, 10)} · {sportLabels[w.type] ?? w.type}
+                  {w.moving_time ? ` · ${fmtDur(w.moving_time)}` : ''}
+                </span>
+              </div>
+            </div>
+            <AddToIntervalsButton
+              workout={w}
+              athleteSlug={athlete.slug as 'mathias' | 'karoline'}
+              athleteId={athlete.athleteId}
+              apiKey={athlete.apiKey}
+              color={athlete.color}
+              onAdded={onAdded}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Øktoppsummering ──────────────────────────────────────────────────────────
+
+interface ActivitySummaryProps {
+  activity: Activity;
+  aiSummary?: string;
+  color: string;
+  onClose: () => void;
+}
+
+function ActivitySummaryCard({ activity, aiSummary, color, onClose }: ActivitySummaryProps) {
+  return (
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{ border: `1px solid ${color}30`, backgroundColor: `${color}08` }}
+    >
+      <div
+        className="flex items-center justify-between px-3 py-2"
+        style={{ borderBottom: `1px solid ${color}15`, backgroundColor: `${color}10` }}
+      >
+        <span className="text-xs font-semibold" style={{ color }}>
+          {sportIcon(activity.type)} Ny økt registrert
+        </span>
+        <button onClick={onClose} className="text-xs opacity-40 hover:opacity-70" style={{ color: 'var(--text)' }}>✕</button>
+      </div>
+      <div className="px-3 py-2 space-y-1.5" style={{ fontSize: 11 }}>
+        <p className="font-medium" style={{ color: 'var(--text)' }}>{activity.name}</p>
+        <div className="flex flex-wrap gap-2 opacity-70" style={{ color: 'var(--text)' }}>
+          <span>{fmtDur(activity.moving_time)}</span>
+          {activity.distance > 0 && <span>{(activity.distance / 1000).toFixed(1)} km</span>}
+          {activity.icu_training_load != null && <span>{Math.round(activity.icu_training_load)} TSS</span>}
+          {activity.average_heartrate != null && <span>{Math.round(activity.average_heartrate)} bpm</span>}
+        </div>
+        {aiSummary && (
+          <p className="leading-snug opacity-75 pt-0.5" style={{ color: 'var(--text)' }}>{aiSummary}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Per-athlete panel ────────────────────────────────────────────────────────
 
 interface AthletePanelProps {
-  slug: 'mathias' | 'karoline';
-  name: string;
-  color: string;
+  athlete: AthleteInfo;
   activities: Activity[];
   events: WorkoutEvent[];
   weather: WeatherData | null;
   onRefresh: () => void;
 }
 
-function AthletePanel({ slug, name, color, activities, events, weather, onRefresh }: AthletePanelProps) {
+function AthletePanel({ athlete, activities, events, weather, onRefresh }: AthletePanelProps) {
   const [analysis, setAnalysis] = useState<DailyAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -110,6 +236,10 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
   const [error, setError] = useState<string | null>(null);
   const [pushLoading, setPushLoading] = useState(false);
   const [pushResult, setPushResult] = useState<string | null>(null);
+  const [aiPushWorkouts, setAiPushWorkouts] = useState<WorkoutEvent[] | null>(null);
+  const [aiPushLabel, setAiPushLabel] = useState('');
+  const [newActivity, setNewActivity] = useState<Activity | null>(null);
+  const [activitySummaryDismissed, setActivitySummaryDismissed] = useState(false);
 
   const today = todayStr();
   const yesterday = yesterdayStr();
@@ -117,20 +247,44 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
   const todayEvents = events.filter((e) => e.start_date_local.slice(0, 10) === today);
   const yesterdayActs = activities.filter((a) => a.start_date_local.slice(0, 10) === yesterday);
 
+  // Detect new activities
+  useEffect(() => {
+    if (activities.length === 0) return;
+    const seen = getSeenActivityIds(athlete.slug);
+    const unseen = activities.filter((a) => !seen.includes(a.id));
+    if (unseen.length > 0) {
+      setNewActivity(unseen[0]);
+    }
+  }, [activities, athlete.slug]);
+
+  function buildApiBody(extra: Record<string, unknown> = {}) {
+    if (athlete.slug === 'mathias' || athlete.slug === 'karoline') {
+      return { athleteSlug: athlete.slug, ...extra };
+    }
+    return {
+      athleteId: athlete.athleteId,
+      apiKey: athlete.apiKey,
+      anthropicKey: athlete.anthropicKey,
+      athleteName: athlete.name,
+      ...extra,
+    };
+  }
+
   const runAnalysis = useCallback(async (force = false) => {
+    if (!athlete.hasAI) return;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/daily-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteSlug: slug, forceRefresh: force }),
+        body: JSON.stringify(buildApiBody({ forceRefresh: force })),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DailyAnalysis = await res.json();
       data.generatedAt = new Date().toISOString();
       saveCache(data);
-      saveActivityIds(slug, activities.map((a) => a.id));
+      saveActivityIds(athlete.slug, activities.map((a) => a.id));
       setAnalysis(data);
       setExpanded(true);
     } catch (e) {
@@ -138,13 +292,15 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
     } finally {
       setLoading(false);
     }
-  }, [slug, activities]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [athlete.slug, athlete.hasAI, activities]);
 
   useEffect(() => {
-    const cached = loadCached(slug);
+    if (!athlete.hasAI) return;
+    const cached = loadCached(athlete.slug);
     if (cached) {
       setAnalysis(cached);
-      const storedIds = getStoredActivityIds(slug);
+      const storedIds = getStoredActivityIds(athlete.slug);
       const hasNew = activities.some((a) => !storedIds.includes(a.id));
       if (hasNew) runAnalysis(false);
       return;
@@ -162,7 +318,7 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
       const res = await fetch('/api/push-week', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteSlug: slug, mode }),
+        body: JSON.stringify(buildApiBody({ mode })),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -184,6 +340,31 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
     }
   }
 
+  async function handleAiPush(mode: 'week' | 'month') {
+    if (!athlete.hasAI) return;
+    setPushLoading(true);
+    setPushResult(null);
+    setAiPushWorkouts(null);
+    try {
+      const res = await fetch('/api/ai-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildApiBody({ mode })),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setAiPushWorkouts(data.workouts ?? []);
+      setAiPushLabel(data.periodLabel ?? '');
+    } catch (e) {
+      setPushResult(`Feil: ${String(e)}`);
+    } finally {
+      setPushLoading(false);
+    }
+  }
+
   async function handleAdaptWeek() {
     if (!analysis?.adaptSuggestion) return;
     setAdaptLoading(true);
@@ -192,7 +373,7 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
       const res = await fetch('/api/quickactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteSlug: slug, action: 'adapt_week', sport: analysis.adaptSuggestion }),
+        body: JSON.stringify(buildApiBody({ action: 'adapt_week', sport: analysis.adaptSuggestion })),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -205,6 +386,8 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
     }
   }
 
+  const { color } = athlete;
+
   return (
     <div
       className="flex-1 flex flex-col rounded-2xl overflow-hidden"
@@ -216,7 +399,7 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
         style={{ backgroundColor: `${color}12`, borderBottom: `1px solid ${color}18` }}
       >
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm" style={{ color }}>{name}</span>
+          <span className="font-semibold text-sm" style={{ color }}>{athlete.name}</span>
           {analysis?.weekType && (
             <span
               className="text-xs px-2 py-0.5 rounded-full"
@@ -233,8 +416,21 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
         )}
       </div>
 
-      {/* Body — grows to fill equal height in flex row */}
+      {/* Body */}
       <div className="flex flex-col flex-1 px-3 py-3 gap-2 text-xs">
+
+        {/* Ny økt-oppsummering */}
+        {newActivity && !activitySummaryDismissed && (
+          <ActivitySummaryCard
+            activity={newActivity}
+            aiSummary={analysis?.activitySummary ?? undefined}
+            color={color}
+            onClose={() => {
+              setActivitySummaryDismissed(true);
+              markActivitySeen(athlete.slug, newActivity.id);
+            }}
+          />
+        )}
 
         {/* I GÅR */}
         <div>
@@ -280,8 +476,15 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
           )}
         </div>
 
-        {/* AI analyse — collapsible */}
-        {(analysis || loading) && (
+        {/* Mangler AI-nøkkel */}
+        {!athlete.hasAI && (
+          <p className="opacity-50 leading-snug" style={{ fontSize: 10 }}>
+            KI-funksjoner er deaktivert — legg til Anthropic-nøkkel i innstillinger.
+          </p>
+        )}
+
+        {/* AI analyse */}
+        {athlete.hasAI && (analysis || loading) && (
           <div className="flex flex-col gap-1.5">
             <button
               onClick={() => setExpanded((v) => !v)}
@@ -294,24 +497,11 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
 
             {expanded && !loading && analysis && (
               <div className="space-y-1.5">
-                {/* Kosthold */}
-                <p className="opacity-75 leading-snug">
-                  🍽️ {analysis.nutritionAdvice}
-                </p>
-
-                {/* Sammendrag */}
-                <p className="opacity-65 leading-snug">
-                  {analysis.summary}
-                </p>
-
-                {/* Vær-merknad */}
+                <p className="opacity-75 leading-snug">🍽️ {analysis.nutritionAdvice}</p>
+                <p className="opacity-65 leading-snug">{analysis.summary}</p>
                 {analysis.weatherNote && (
-                  <p className="opacity-65 leading-snug">
-                    🌧️ {analysis.weatherNote}
-                  </p>
+                  <p className="opacity-65 leading-snug">🌧️ {analysis.weatherNote}</p>
                 )}
-
-                {/* Tilpass uken */}
                 {analysis.adaptWeek && analysis.adaptSuggestion && (
                   <div
                     className="rounded-lg px-2.5 py-2 space-y-1.5"
@@ -342,24 +532,38 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
           </div>
         )}
 
+        {/* AI push-forslag (for brukere uten program) */}
+        {aiPushWorkouts && (
+          <AiPushPanel
+            athlete={athlete}
+            periodLabel={aiPushLabel}
+            workouts={aiPushWorkouts}
+            onClose={() => setAiPushWorkouts(null)}
+            onAdded={onRefresh}
+          />
+        )}
+
         {error && (
           <p className="text-red-500 opacity-80">{error}</p>
         )}
 
-        {/* Spacer — pushes button to bottom */}
         <div className="flex-1" />
 
-        {/* Bunn: analyser-knapp + push-knapper for Mathias */}
+        {/* Bunn: knapper */}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => runAnalysis(true)}
-            disabled={loading}
-            className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
-            style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
-          >
-            {loading ? '↻ analyserer...' : '↻ analyser på nytt'}
-          </button>
-          {slug === 'mathias' && (
+          {athlete.hasAI && (
+            <button
+              onClick={() => runAnalysis(true)}
+              disabled={loading}
+              className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
+              style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
+            >
+              {loading ? '↻ analyserer...' : '↻ analyser på nytt'}
+            </button>
+          )}
+
+          {/* Program-push (Mathias-stil) */}
+          {athlete.hasProgram && (
             <>
               <button
                 onClick={() => handlePush('week')}
@@ -367,7 +571,7 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
                 className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
                 style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
               >
-                {pushLoading ? '↑ pusher...' : '↑ push neste uke'}
+                {pushLoading ? '↑ pusher...' : '↑ Generer og push uke'}
               </button>
               <button
                 onClick={() => handlePush('month')}
@@ -375,11 +579,34 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
                 className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
                 style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
               >
-                ↑ push neste måned
+                ↑ Generer og push måned
+              </button>
+            </>
+          )}
+
+          {/* KI-push (Karoline/andre uten program) */}
+          {!athlete.hasProgram && athlete.hasAI && (
+            <>
+              <button
+                onClick={() => handleAiPush('week')}
+                disabled={pushLoading}
+                className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
+                style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
+              >
+                {pushLoading ? '↑ genererer...' : '↑ Generer plan: uke'}
+              </button>
+              <button
+                onClick={() => handleAiPush('month')}
+                disabled={pushLoading}
+                className="opacity-30 hover:opacity-70 transition-opacity disabled:opacity-20"
+                style={{ fontSize: 9, color: 'var(--text-subtle)', letterSpacing: '0.04em' }}
+              >
+                ↑ Generer plan: måned
               </button>
             </>
           )}
         </div>
+
         {pushResult && (
           <p className="opacity-60 leading-snug" style={{ fontSize: 10 }}>{pushResult}</p>
         )}
@@ -391,8 +618,44 @@ function AthletePanel({ slug, name, color, activities, events, weather, onRefres
 // ─── DayModule ─────────────────────────────────────────────────────────────────
 
 export function DayModule({
-  mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, weather, onRefresh,
+  config,
+  mathiasActivities, mathiasEvents,
+  karolineActivities, karolineEvents,
+  customActivities, customEvents,
+  weather, onRefresh,
 }: DayModuleProps) {
+  const isPreset = config.mode === 'preset';
+  const hasAI = isPreset ? true : !!config.anthropicKey;
+
+  const athletes: Array<{ info: AthleteInfo; activities: Activity[]; events: WorkoutEvent[] }> = isPreset
+    ? [
+        {
+          info: { slug: 'mathias', name: 'Mathias', color: '#16a34a', hasProgram: true, hasAI: true },
+          activities: mathiasActivities,
+          events: mathiasEvents,
+        },
+        {
+          info: { slug: 'karoline', name: 'Karoline', color: '#2563eb', hasProgram: false, hasAI: true },
+          activities: karolineActivities,
+          events: karolineEvents,
+        },
+      ]
+    : [
+        {
+          info: {
+            slug: config.athleteId,
+            name: config.name,
+            color: '#7c3aed',
+            hasProgram: false,
+            hasAI,
+            anthropicKey: config.anthropicKey,
+            athleteId: config.athleteId,
+            apiKey: config.apiKey,
+          },
+          activities: customActivities,
+          events: customEvents,
+        },
+      ];
 
   return (
     <div
@@ -401,10 +664,16 @@ export function DayModule({
     >
       <p className="text-xs uppercase tracking-wider opacity-30 mb-2.5" style={{ fontSize: 9 }}>Dagens oversikt</p>
       <div className="flex flex-col sm:flex-row gap-3">
-        <AthletePanel slug="mathias" name="Mathias" color="#16a34a"
-          activities={mathiasActivities} events={mathiasEvents} weather={weather} onRefresh={onRefresh} />
-        <AthletePanel slug="karoline" name="Karoline" color="#2563eb"
-          activities={karolineActivities} events={karolineEvents} weather={weather} onRefresh={onRefresh} />
+        {athletes.map(({ info, activities, events }) => (
+          <AthletePanel
+            key={info.slug}
+            athlete={info}
+            activities={activities}
+            events={events}
+            weather={weather}
+            onRefresh={onRefresh}
+          />
+        ))}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, buildDailyAnalysisPrompt } from "@/lib/ai";
+import { makeAnthropic, buildDailyAnalysisPrompt } from "@/lib/ai";
 import { fetchActivities, fetchEvents, fetchWellness } from "@/lib/intervals";
 import { getAthlete } from "@/lib/athletes";
 import { today, daysAgo, daysFromNow } from "@/lib/date-utils";
@@ -30,13 +30,29 @@ async function fetchWeather(): Promise<WeatherData | null> {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug } = body;
+  const { athleteSlug, athleteId: directAthleteId, apiKey: directApiKey, anthropicKey, athleteName: directName } = body;
 
-  if (athleteSlug !== "mathias" && athleteSlug !== "karoline") {
+  let athleteId: string;
+  let apiKey: string;
+  let athleteName: string;
+  let resolvedSlug: string;
+
+  if (directAthleteId && directApiKey) {
+    athleteId = directAthleteId;
+    apiKey = directApiKey;
+    athleteName = directName ?? "Bruker";
+    resolvedSlug = "custom";
+  } else if (athleteSlug === "mathias" || athleteSlug === "karoline") {
+    const athlete = getAthlete(athleteSlug);
+    athleteId = athlete.id;
+    apiKey = athlete.apiKey;
+    athleteName = athlete.name;
+    resolvedSlug = athleteSlug;
+  } else {
     return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
   }
 
-  const athlete = getAthlete(athleteSlug);
+  const client = makeAnthropic(anthropicKey);
   const t = today();
   const twoDaysAgo = daysAgo(2);
   const yesterday = daysAgo(1);
@@ -44,10 +60,10 @@ export async function POST(req: NextRequest) {
   const weekAhead = daysFromNow(7);
 
   const [activitiesRes, eventsRes, futureEventsRes, wellnessRes, weather] = await Promise.allSettled([
-    fetchActivities(athlete.id, athlete.apiKey, twoDaysAgo, t, 5),
-    fetchEvents(athlete.id, athlete.apiKey, t, t),
-    fetchEvents(athlete.id, athlete.apiKey, t, weekAhead),
-    fetchWellness(athlete.id, athlete.apiKey, yesterday, t),
+    fetchActivities(athleteId, apiKey, twoDaysAgo, t, 5),
+    fetchEvents(athleteId, apiKey, t, t),
+    fetchEvents(athleteId, apiKey, t, weekAhead),
+    fetchWellness(athleteId, apiKey, yesterday, t),
     fetchWeather(),
   ]);
 
@@ -58,8 +74,8 @@ export async function POST(req: NextRequest) {
   const weatherData = weather.status === "fulfilled" ? weather.value : null;
 
   const prompt = buildDailyAnalysisPrompt(
-    athlete.name,
-    athleteSlug,
+    athleteName,
+    resolvedSlug,
     activities,
     events,
     futureEvents,
@@ -68,7 +84,7 @@ export async function POST(req: NextRequest) {
   );
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await client.messages.create({
       model: "claude-opus-4-6",
       max_tokens: 600,
       messages: [{ role: "user", content: prompt }],

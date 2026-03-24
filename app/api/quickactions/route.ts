@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, buildSystemPrompt, buildShortContext } from "@/lib/ai";
+import { makeAnthropic, buildSystemPrompt, buildShortContext } from "@/lib/ai";
 import { fetchEvents, fetchWellness } from "@/lib/intervals";
 import { getAthlete } from "@/lib/athletes";
 import { today, daysAgo, daysFromNow } from "@/lib/date-utils";
@@ -15,23 +15,39 @@ const QUICK_PROMPTS: Record<string, (sport?: string) => string> = {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug, action, sport } = body;
+  const { athleteSlug, action, sport, athleteId: directAthleteId, apiKey: directApiKey, anthropicKey, athleteName: directName } = body;
 
-  if (athleteSlug !== "mathias" && athleteSlug !== "karoline") {
+  let athleteId: string;
+  let apiKey: string;
+  let athleteName: string;
+  let resolvedSlug: string;
+
+  if (directAthleteId && directApiKey) {
+    athleteId = directAthleteId;
+    apiKey = directApiKey;
+    athleteName = directName ?? "Bruker";
+    resolvedSlug = "custom";
+  } else if (athleteSlug === "mathias" || athleteSlug === "karoline") {
+    const athlete = getAthlete(athleteSlug);
+    athleteId = athlete.id;
+    apiKey = athlete.apiKey;
+    athleteName = athlete.name;
+    resolvedSlug = athleteSlug;
+  } else {
     return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
   }
 
-  const athlete = getAthlete(athleteSlug);
+  const client = makeAnthropic(anthropicKey);
   const t = today();
 
   const [events, wellness] = await Promise.allSettled([
-    fetchEvents(athlete.id, athlete.apiKey, t, daysFromNow(5)),
-    fetchWellness(athlete.id, athlete.apiKey, daysAgo(1), t),
+    fetchEvents(athleteId, apiKey, t, daysFromNow(5)),
+    fetchWellness(athleteId, apiKey, daysAgo(1), t),
   ]);
 
   const context = buildShortContext(
-    athlete.name,
-    athleteSlug,
+    athleteName,
+    resolvedSlug,
     events.status === "fulfilled" ? events.value : [],
     wellness.status === "fulfilled" ? wellness.value : []
   );
@@ -45,7 +61,7 @@ export async function POST(req: NextRequest) {
   const systemPrompt = buildSystemPrompt() + "\n\n" + context;
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await client.messages.create({
       model: "claude-opus-4-6",
       max_tokens: 512,
       system: systemPrompt,

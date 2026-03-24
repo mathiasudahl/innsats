@@ -17,16 +17,28 @@ function startTime(timeOfDay: ProgramWorkout["timeOfDay"]): string {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { athleteSlug, mode } = body;
+  const { athleteSlug, mode, athleteId: directAthleteId, apiKey: directApiKey } = body;
 
-  if (athleteSlug !== "mathias") {
-    return NextResponse.json({ error: "Only supported for Mathias" }, { status: 400 });
-  }
   if (mode !== "week" && mode !== "month") {
     return NextResponse.json({ error: "mode must be week or month" }, { status: 400 });
   }
 
-  const athlete = getAthlete("mathias");
+  // Only Mathias has a program file
+  if (athleteSlug !== "mathias" && !directAthleteId) {
+    return NextResponse.json({ error: "Only supported for athletes with a program" }, { status: 400 });
+  }
+
+  let athleteIdResolved: string;
+  let apiKeyResolved: string;
+
+  if (directAthleteId && directApiKey) {
+    athleteIdResolved = directAthleteId;
+    apiKeyResolved = directApiKey;
+  } else {
+    const athlete = getAthlete("mathias");
+    athleteIdResolved = athlete.id;
+    apiKeyResolved = athlete.apiKey;
+  }
   const now = new Date();
 
   let weeks: ProgramWeek[];
@@ -62,7 +74,7 @@ export async function POST(req: NextRequest) {
   const rangeStart = allDates.reduce((a, b) => (a < b ? a : b));
   const rangeEnd = allDates.reduce((a, b) => (a > b ? a : b));
 
-  const existingEvents = await fetchEvents(athlete.id, athlete.apiKey, rangeStart, rangeEnd);
+  const existingEvents = await fetchEvents(athleteIdResolved, apiKeyResolved, rangeStart, rangeEnd);
 
   let added = 0;
   let skipped = 0;
@@ -80,7 +92,7 @@ export async function POST(req: NextRequest) {
       );
       if (duplicate) { skipped++; continue; }
 
-      await createEvent(athlete.id, athlete.apiKey, {
+      await createEvent(athleteIdResolved, apiKeyResolved, {
         start_date_local: `${date}T${startTime(workout.timeOfDay)}`,
         category: "WORKOUT",
         type: workout.type,

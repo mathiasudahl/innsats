@@ -132,5 +132,14 @@ export interface DailyAnalysis {
   weatherNote?: string;
   adaptWeek: boolean;
   adaptSuggestion?: string;
+  activitySummary?: string;
   generatedAt: string;
+}
+
+export interface UserConfig {
+  mode: 'preset' | 'custom';
+  name: string;
+  athleteId: string;
+  apiKey: string;
+  anthropicKey?: string;
 }

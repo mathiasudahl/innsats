@@ -9,21 +9,33 @@ export async function GET(req: NextRequest) {
   const oldest = searchParams.get("oldest") ?? "";
   const newest = searchParams.get("newest") ?? "";
 
-  if (slug !== "mathias" && slug !== "karoline") {
+  // Support direct athleteId/apiKey for custom users
+  const directAthleteId = searchParams.get("athleteId");
+  const directApiKey = searchParams.get("apiKey");
+
+  let athleteId: string;
+  let apiKey: string;
+
+  if (directAthleteId && directApiKey) {
+    athleteId = directAthleteId;
+    apiKey = directApiKey;
+  } else if (slug === "mathias" || slug === "karoline") {
+    const athlete = getAthlete(slug);
+    athleteId = athlete.id;
+    apiKey = athlete.apiKey;
+  } else {
     return NextResponse.json({ error: "Invalid athlete" }, { status: 400 });
   }
-
-  const athlete = getAthlete(slug);
 
   try {
     let data;
     if (type === "activities") {
       const limit = parseInt(searchParams.get("limit") ?? "50");
-      data = await fetchActivities(athlete.id, athlete.apiKey, oldest, newest, limit);
+      data = await fetchActivities(athleteId, apiKey, oldest, newest, limit);
     } else if (type === "events") {
-      data = await fetchEvents(athlete.id, athlete.apiKey, oldest, newest);
+      data = await fetchEvents(athleteId, apiKey, oldest, newest);
     } else if (type === "wellness") {
-      data = await fetchWellness(athlete.id, athlete.apiKey, oldest, newest);
+      data = await fetchWellness(athleteId, apiKey, oldest, newest);
     } else {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });
     }
