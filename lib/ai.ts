@@ -174,11 +174,15 @@ export function buildDailyAnalysisPrompt(
   todayEvents: WorkoutEvent[],
   futureEvents: WorkoutEvent[],
   wellness: Wellness[],
-  weather: WeatherData | null
+  weather: WeatherData | null,
+  recentStreams?: { activityId: number; streams: Record<string, number[]> }
 ): string {
   const todayStr = today();
   const yesterdayStr = daysAgo(1);
 
+  const todayActivities = activities.filter(
+    (a) => a.start_date_local.slice(0, 10) === todayStr
+  );
   const yesterdayActivities = activities.filter(
     (a) => a.start_date_local.slice(0, 10) === yesterdayStr
   );
@@ -186,7 +190,7 @@ export function buildDailyAnalysisPrompt(
 
   const programCtx = buildProgramContext(athleteSlug);
 
-  let prompt = `Du er en treningscoach. Analyser dataene nedenfor og returner BARE et JSON-objekt (ingen markdown, ingen tekst utenfor JSON).
+  let prompt = `Du er en erfaren og krevende treningscoach. Analyser dataene nedenfor og returner BARE et JSON-objekt (ingen markdown, ingen tekst utenfor JSON).
 
 Utøver: ${athleteName}
 Dato i dag: ${todayStr}
@@ -196,9 +200,8 @@ Dato i dag: ${todayStr}
     prompt += `\n${programCtx}\n`;
   }
 
-
   if (latestWellness) {
-    prompt += `\nDagsform: CTL=${Math.round(latestWellness.ctl ?? 0)}, ATL=${Math.round(latestWellness.atl ?? 0)}, TSB=${Math.round(latestWellness.tsb ?? 0)}`;
+    prompt += `\nDagsform (i dag): CTL=${Math.round(latestWellness.ctl ?? 0)}, ATL=${Math.round(latestWellness.atl ?? 0)}, TSB=${Math.round(latestWellness.tsb ?? 0)}`;
     if (latestWellness.weight) prompt += `, Vekt=${latestWellness.weight.toFixed(1)}kg`;
     if (latestWellness.hrv) prompt += `, HRV=${latestWellness.hrv}`;
     if (latestWellness.sleepSecs) prompt += `, Søvn=${Math.round(latestWellness.sleepSecs / 3600 * 10) / 10}t`;
@@ -206,8 +209,31 @@ Dato i dag: ${todayStr}
     prompt += "\n";
   }
 
-  if (!programCtx && activities.length > 0) {
-    // Group by ISO week for context on whether this week is heavy/light
+  // CTL/ATL/TSB trend — weekly snapshots for last 8 weeks
+  if (wellness.length > 1) {
+    const weekSnapshots: { wk: string; ctl: number; atl: number; tsb: number }[] = [];
+    const seen = new Set<string>();
+    for (const w of [...wellness].reverse()) {
+      const d = new Date(w.id);
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const wk = mon.toISOString().slice(0, 10);
+      if (!seen.has(wk) && w.ctl != null) {
+        seen.add(wk);
+        weekSnapshots.unshift({ wk, ctl: Math.round(w.ctl), atl: Math.round(w.atl ?? 0), tsb: Math.round(w.tsb ?? 0) });
+      }
+      if (weekSnapshots.length >= 8) break;
+    }
+    if (weekSnapshots.length > 0) {
+      prompt += "\nFormtrend (siste uker, CTL/ATL/TSB):\n";
+      for (const s of weekSnapshots) {
+        prompt += `- uke ${s.wk}: CTL=${s.ctl}, ATL=${s.atl}, TSB=${s.tsb}\n`;
+      }
+    }
+  }
+
+  // Weekly training volume for last 8 weeks
+  if (activities.length > 0) {
     const weekTotals: Record<string, { tss: number; count: number }> = {};
     for (const a of activities) {
       const d = new Date(a.start_date_local);
@@ -220,29 +246,76 @@ Dato i dag: ${todayStr}
     }
     const weekLines = Object.entries(weekTotals)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([wk, v]) => `uke fra ${wk}: ${v.count} økter, ${Math.round(v.tss)} TSS`);
-    prompt += "\nUkesvolum siste 14 dager:\n" + weekLines.map((l) => `- ${l}`).join("\n") + "\n";
+      .slice(-8)
+      .map(([wk, v]) => `uke ${wk}: ${v.count} økter, ${Math.round(v.tss)} TSS`);
+    prompt += "\nUkesvolum siste 8 uker:\n" + weekLines.map((l) => `- ${l}`).join("\n") + "\n";
+  }
 
+  // Recent activities (last 10)
+  const recentActs = [...activities].reverse().slice(0, 10);
+  if (recentActs.length > 0) {
     prompt += "\nSiste aktiviteter (nyeste først):\n";
-    for (const a of [...activities].reverse().slice(0, 10)) {
+    for (const a of recentActs) {
       const parts = [a.start_date_local.slice(0, 10), a.type, a.name, formatTime(a.moving_time)];
       if (a.distance > 0) parts.push(formatDistance(a.distance));
       if (a.icu_training_load) parts.push(`${Math.round(a.icu_training_load)} TSS`);
+      if (a.average_heartrate) parts.push(`snitt ${Math.round(a.average_heartrate)} bpm`);
+      if (a.average_watts) parts.push(`snitt ${Math.round(a.average_watts)}W`);
+      if (a.icu_intensity) parts.push(`IF=${a.icu_intensity.toFixed(2)}`);
       prompt += `- ${parts.join(" | ")}\n`;
     }
   }
 
-  if (yesterdayActivities.length > 0) {
+  // HR/watts stream analysis for the most recent activity
+  if (recentStreams && (recentStreams.streams.heartrate || recentStreams.streams.watts)) {
+    const hr = recentStreams.streams.heartrate ?? [];
+    const watts = recentStreams.streams.watts ?? [];
+    if (hr.length > 0) {
+      const avgHr = Math.round(hr.reduce((s, v) => s + v, 0) / hr.length);
+      const maxHr = Math.max(...hr);
+      // 30-sec block averages
+      const blockSize = 30;
+      const blocks: number[] = [];
+      for (let i = 0; i < hr.length; i += blockSize) {
+        const slice = hr.slice(i, i + blockSize);
+        blocks.push(Math.round(slice.reduce((s, v) => s + v, 0) / slice.length));
+      }
+      const above90pct = blocks.filter((b) => b > maxHr * 0.9).length;
+      const z4range = blocks.filter((b) => b >= maxHr * 0.8 && b <= maxHr * 0.9).length;
+      prompt += `\nPulsanalyse siste økt (aktivitet ${recentStreams.activityId}):\n`;
+      prompt += `- Snitt HR: ${avgHr} bpm, maks HR: ${maxHr} bpm\n`;
+      prompt += `- Andel blokker (30-sek) over 90% av maks: ${Math.round(above90pct / blocks.length * 100)}%\n`;
+      prompt += `- Andel blokker i Z4 (80–90% av maks): ${Math.round(z4range / blocks.length * 100)}%\n`;
+    }
+    if (watts.length > 0) {
+      const avgW = Math.round(watts.filter((w) => w > 0).reduce((s, v) => s + v, 0) / watts.filter((w) => w > 0).length);
+      prompt += `- Snitt watt (ekskl. null): ${avgW}W\n`;
+    }
+  }
+
+  // Today's completed activities
+  if (todayActivities.length > 0) {
+    prompt += "\nDagens gjennomførte økt(er):\n";
+    for (const a of todayActivities) {
+      const parts = [a.type, a.name, formatTime(a.moving_time)];
+      if (a.distance > 0) parts.push(formatDistance(a.distance));
+      if (a.icu_training_load) parts.push(`${Math.round(a.icu_training_load)} TSS`);
+      if (a.average_heartrate) parts.push(`snitt ${Math.round(a.average_heartrate)} bpm`);
+      if (a.average_watts) parts.push(`snitt ${Math.round(a.average_watts)}W`);
+      prompt += `- ${parts.join(" | ")}\n`;
+    }
+  } else if (yesterdayActivities.length > 0) {
     prompt += "\nGårsdagens gjennomførte økt(er):\n";
     for (const a of yesterdayActivities) {
       const parts = [a.type, a.name, formatTime(a.moving_time)];
       if (a.distance > 0) parts.push(formatDistance(a.distance));
       if (a.icu_training_load) parts.push(`${Math.round(a.icu_training_load)} TSS`);
-      if (a.average_heartrate) parts.push(`${Math.round(a.average_heartrate)} bpm`);
+      if (a.average_heartrate) parts.push(`snitt ${Math.round(a.average_heartrate)} bpm`);
+      if (a.average_watts) parts.push(`snitt ${Math.round(a.average_watts)}W`);
       prompt += `- ${parts.join(" | ")}\n`;
     }
   } else {
-    prompt += "\nGårsdagens aktivitet: HVILEDAG (ingen registrert økt — dette er normalt og etter plan).\n";
+    prompt += "\nGårsdagens aktivitet: HVILEDAG.\n";
   }
 
   if (todayEvents.length > 0) {
@@ -258,8 +331,8 @@ Dato i dag: ${todayStr}
   }
 
   if (futureEvents.length > 0) {
-    prompt += "\nØkter planlagt neste 7 dager:\n";
-    for (const e of futureEvents.slice(0, 10)) {
+    prompt += "\nØkter planlagt neste 14 dager:\n";
+    for (const e of futureEvents.slice(0, 14)) {
       const parts = [formatDate(e.start_date_local), e.type, e.name];
       if (e.moving_time) parts.push(formatTime(e.moving_time));
       if (e.icu_training_load) parts.push(`${Math.round(e.icu_training_load)} TSS`);
@@ -268,18 +341,18 @@ Dato i dag: ${todayStr}
   }
 
   if (weather) {
-    prompt += `\nVær i dag: ${weather.temperature}°C, vind ${weather.windspeed} m/s, symbol ${weather.symbol} (${weather.description})\n`;
+    prompt += `\nVær i dag: ${weather.temperature}°C, vind ${weather.windspeed} m/s, symbol ${weather.symbol}\n`;
   }
 
   prompt += `
 Instruksjoner:
-1. weekType: Bruk programfasen direkte fra konteksten om tilgjengelig (f.eks. "Build 1: Restitusjon"). Ellers: sammenlign denne ukens planlagte TSS og antall økter med ukesvolum-historikken ovenfor. Er denne uken vesentlig tyngre enn snittet → "Belastningsuke". Lettere enn snittet → "Restitusjon". Omtrent likt → "Normaluke" eller "Basetrening". Aldri tom streng — alltid 1–4 ord. weekTypeSource: sett "program" om du brukte programkontekst, ellers "ai".
-2. summary: Én setning maks. Basert kun på CTL/ATL/TSB/HRV — ikke vær, ikke motivasjon. Eksempel: "TSB på +12 og stigende CTL — klar for hard økt." eller "ATL høy etter tung uke, TSB negativ — dempe ned i dag."
-3. nutritionAdvice: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da ett konkret kostholdsråd knyttet direkte til den spesifikke økten (restitusjon, glykogen, protein osv.). Null ellers.
-4. weatherNote: Bare hvis regnvær (symbol inneholder "rain", "sleet", "shower") treffer planlagt løpeøkt (Run) utendørs, ELLER sterk vind (>10 m/s) treffer planlagt utendørs sykkeltur uten watt-struktur (dvs. rolig tur/langtur, ikke intervaller). Watt-baserte sykkeltreninger (terskel, intervaller) påvirkes ikke av vind — ikke kommenter vær på disse. Null ellers.
-5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS (ikke hviledag). Hviledag = adaptWeek=false.
+1. weekType: Bruk programfasen direkte fra konteksten om tilgjengelig (f.eks. "Build 1: Restitusjon"). For andre: anbefal ukestype basert på formstatus (CTL/ATL/TSB-trend) — ikke bare hva som er planlagt. F.eks. "Restitusjon" om TSB er svært negativ og ATL høy, "Belastning" om TSB er positiv og CTL kan økes. Aldri tom streng — alltid 1–4 ord. weekTypeSource: sett "program" om programkontekst ble brukt, ellers "ai".
+2. summary: Vurder formtrend over siste 4–8 uker basert på CTL/ATL/TSB-historikken. Er formen stigende, på platå, eller fallende? Passer planlagte økter neste 2 uker med formstatus — er det for mye eller for lite? Vær konkret og streng som en krevende trener. Maks 3 setninger. Ingen motivasjonsfraser.
+3. nutritionAdvice: Fyll ut KUN om det er gjennomført økt i dag eller i går — ett konkret kostholdsråd knyttet til den spesifikke økttypen. Null ellers.
+4. weatherNote: Bare hvis regnvær treffer planlagt løpeøkt (Run), ELLER sterk vind (>10 m/s) treffer planlagt utendørs rolig sykkeltur (ikke intervaller/terskel). Watt-baserte treninger påvirkes ikke av vind. Null ellers.
+5. adaptWeek: Sett true BARE om gjennomført økt avvek >20% fra planlagt TSS. Hviledag = false.
 6. adaptSuggestion: Konkret forslag kun om adaptWeek=true.
-7. activitySummary: Fyll ut KUN om det er gjennomført en økt siste 24t — gi da en konkret oppsummering av den (2-3 setninger om intensitet, kvalitet, hva som gikk bra/dårlig basert på TSS, HF og varighet). Null ellers.
+7. activitySummary: Fyll ut KUN om det er gjennomført økt i dag. Beskriv intensitet og kvalitet — bruk pulsanalysen ovenfor om tilgjengelig. Var intensiteten i riktig sone? Var blokkene for harde/lette? Maks 2–3 setninger, faktabasert. Null ellers.
 
 Returner BARE dette JSON-objektet:
 {
@@ -287,8 +360,8 @@ Returner BARE dette JSON-objektet:
   "athleteSlug": "${athleteSlug}",
   "weekType": "Restitusjonsuke",
   "weekTypeSource": "ai",
-  "summary": "Kort kommentar om i går",
-  "nutritionAdvice": "Konkret anbefaling for i dag",
+  "summary": "Formvurdering",
+  "nutritionAdvice": null,
   "weatherNote": null,
   "adaptWeek": false,
   "adaptSuggestion": null,

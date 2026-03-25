@@ -340,7 +340,7 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
               className="text-xs px-2 py-0.5 rounded-full"
               style={{ backgroundColor: `${color}15`, color: `${color}cc` }}
             >
-              {analysis.weekTypeSource === 'ai' ? `KI-vurdert: ${analysis.weekType}` : analysis.weekType}
+              {analysis.weekTypeSource === 'ai' ? `Anbefalt: ${analysis.weekType}` : analysis.weekType}
             </span>
           )}
         </div>
@@ -449,11 +449,12 @@ function AthletePanel({ athlete, activities, events, weather, onRefresh }: Athle
           <div className="flex flex-col gap-1.5">
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="flex items-center gap-1 text-left opacity-60 hover:opacity-90 transition-opacity"
-              style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase' }}
+              className="flex items-center gap-1.5 text-left opacity-60 hover:opacity-100 transition-opacity py-1 w-full"
             >
-              <span style={{ color }}>▸</span>
-              {loading ? 'Analyserer...' : `Formstatus ${expanded ? '▴' : '▾'}`}
+              <span style={{ color, fontSize: 14, lineHeight: 1 }}>{expanded ? '▾' : '▸'}</span>
+              <span style={{ fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                {loading ? 'Analyserer...' : 'Formstatus'}
+              </span>
             </button>
 
             {expanded && !loading && analysis && (

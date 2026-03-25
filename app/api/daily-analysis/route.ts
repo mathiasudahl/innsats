@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { makeAnthropic, buildDailyAnalysisPrompt } from "@/lib/ai";
-import { fetchActivities, fetchEvents, fetchWellness } from "@/lib/intervals";
+import { fetchActivities, fetchEvents, fetchWellness, fetchActivityStreams } from "@/lib/intervals";
 import { getAthlete } from "@/lib/athletes";
 import { today, daysAgo, daysFromNow } from "@/lib/date-utils";
 import type { DailyAnalysis, WeatherData } from "@/lib/types";
@@ -54,16 +54,14 @@ export async function POST(req: NextRequest) {
 
   const client = makeAnthropic(anthropicKey);
   const t = today();
-  const fourteenDaysAgo = daysAgo(14);
-  const yesterday = daysAgo(1);
-
-  const weekAhead = daysFromNow(7);
+  const sixtyDaysAgo = daysAgo(60);
+  const twoWeeksAhead = daysFromNow(14);
 
   const [activitiesRes, eventsRes, futureEventsRes, wellnessRes, weather] = await Promise.allSettled([
-    fetchActivities(athleteId, apiKey, fourteenDaysAgo, t, 14),
+    fetchActivities(athleteId, apiKey, sixtyDaysAgo, t, 60),
     fetchEvents(athleteId, apiKey, t, t),
-    fetchEvents(athleteId, apiKey, t, weekAhead),
-    fetchWellness(athleteId, apiKey, yesterday, t),
+    fetchEvents(athleteId, apiKey, t, twoWeeksAhead),
+    fetchWellness(athleteId, apiKey, sixtyDaysAgo, t),
     fetchWeather(),
   ]);
 
@@ -73,6 +71,18 @@ export async function POST(req: NextRequest) {
   const wellness = wellnessRes.status === "fulfilled" ? wellnessRes.value : [];
   const weatherData = weather.status === "fulfilled" ? weather.value : null;
 
+  // Fetch HR/watts streams for the most recent activity (today or yesterday)
+  const todayStr = t;
+  const yesterdayStr = daysAgo(1);
+  const recentActivity = activities.find(
+    (a) => a.start_date_local.slice(0, 10) === todayStr || a.start_date_local.slice(0, 10) === yesterdayStr
+  );
+  let activityStreams: Record<string, number[]> = {};
+  if (recentActivity?.id) {
+    const streamsRes = await fetchActivityStreams(athleteId, apiKey, recentActivity.id).catch(() => ({}));
+    activityStreams = streamsRes;
+  }
+
   const prompt = buildDailyAnalysisPrompt(
     athleteName,
     resolvedSlug,
@@ -80,13 +90,14 @@ export async function POST(req: NextRequest) {
     events,
     futureEvents,
     wellness,
-    weatherData
+    weatherData,
+    recentActivity?.id ? { activityId: recentActivity.id, streams: activityStreams } : undefined
   );
 
   try {
     const response = await client.messages.create({
       model: "claude-opus-4-6",
-      max_tokens: 600,
+      max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     });
 

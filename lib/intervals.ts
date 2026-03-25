@@ -118,6 +118,31 @@ export async function deleteEvent(
   if (!res.ok) throw new Error(`Delete event failed: ${res.status}`);
 }
 
+export async function fetchActivityStreams(
+  athleteId: string,
+  apiKey: string,
+  activityId: number,
+  types: string[] = ["heartrate", "watts"]
+): Promise<Record<string, number[]>> {
+  const params = new URLSearchParams({ types: types.join(",") });
+  const res = await intervalsFetch(
+    apiKey,
+    `/athlete/${athleteId}/activities/${activityId}/streams?${params}`
+  );
+  if (!res.ok) return {};
+  const data = await res.json();
+  // Intervals returns array of {type, data} objects
+  const result: Record<string, number[]> = {};
+  if (Array.isArray(data)) {
+    for (const stream of data) {
+      if (stream.type && Array.isArray(stream.data)) {
+        result[stream.type] = stream.data;
+      }
+    }
+  }
+  return result;
+}
+
 export async function deleteEventsForDate(
   athleteId: string,
   apiKey: string,
