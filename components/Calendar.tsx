@@ -685,15 +685,16 @@ function DayCol({ date, chips, color, isWeekStart, weather, showWeather, onRefre
     <div
       className="flex flex-col"
       style={{
-        borderLeft: birthday ? `2px solid ${birthday.color}60` : isWeekStart ? '2px solid var(--border)' : '1px solid var(--border)',
+        borderLeft: isWeekStart ? '2px solid var(--border)' : '1px solid var(--border)',
         background: dragOver ? `${color}10`
           : birthday ? `linear-gradient(160deg, ${birthday.color}12 0%, ${birthday.color}06 60%, transparent 100%)`
           : today ? `${color}06`
           : past ? 'rgba(0,0,0,0.03)'
           : 'transparent',
-        outline: dragOver ? `2px dashed ${color}60` : birthday ? `1px solid ${birthday.color}25` : undefined,
-        outlineOffset: birthday ? -1 : -2,
+        outline: dragOver ? `2px dashed ${color}60` : undefined,
+        outlineOffset: -2,
         transition: 'background-color 0.1s',
+        position: 'relative',
       }}
       onDragOver={handleDragOver}
       onDragLeave={() => setDragOver(false)}
@@ -727,15 +728,33 @@ function DayCol({ date, chips, color, isWeekStart, weather, showWeather, onRefre
         </div>
         <div style={{ fontSize: 9, lineHeight: 1.2, height: 13, marginTop: 1, position: 'relative' }}>
           {birthday
-            ? <span style={{ color: birthday.color, fontWeight: 600, letterSpacing: '0.02em' }}>🎂</span>
+            ? <span style={{ color: birthday.color, fontWeight: 600 }}>🎂 {birthday.name}</span>
             : showWeather && weather && weather.temperature != null
               ? <span style={{ color: 'var(--text-subtle)' }}>{symbolToEmoji(weather.symbol)}{weather.temperature}°</span>
               : null}
         </div>
       </div>
 
+      {/* Birthday watermark */}
+      {birthday && (
+        <div style={{
+          position: 'absolute', inset: 0, top: 52,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none', overflow: 'hidden', zIndex: 0,
+        }}>
+          <div style={{
+            fontSize: 42, lineHeight: 1, opacity: 0.06,
+            transform: 'rotate(-35deg) translateY(8px)',
+            userSelect: 'none', color: birthday.color, fontWeight: 900,
+            letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+          }}>
+            {birthday.name}
+          </div>
+        </div>
+      )}
+
       {/* Slots */}
-      <div className="flex flex-col gap-1 p-1.5 flex-1" style={{ opacity: moving ? 0.5 : 1, minHeight: SLOTS * (CELL_HEIGHT + 4) }}>
+      <div className="flex flex-col gap-1 p-1.5 flex-1" style={{ opacity: moving ? 0.5 : 1, minHeight: SLOTS * (CELL_HEIGHT + 4), position: 'relative', zIndex: 1 }}>
         {slots.map((_, i) => {
           const chip = chips[i];
           if (!chip) return (
