@@ -523,7 +523,7 @@ export function WorkoutWizard({ config, onSuccess, onPreview }: Props) {
   const breadcrumb: string[] = [];
   if (actionLabel) breadcrumb.push(actionLabel);
   if (variantLabel) breadcrumb.push(variantLabel);
-  if (athleteSlug) breadcrumb.push(athleteSlug === 'mathias' ? 'Mathias' : 'Karoline');
+  if (athleteSlug) breadcrumb.push(config.mode === 'preset' ? (athleteSlug === 'mathias' ? 'Mathias' : 'Karoline') : config.name);
   if (sportLabel) breadcrumb.push(sportLabel);
 
   return (

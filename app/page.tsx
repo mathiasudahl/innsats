@@ -242,6 +242,7 @@ export default function Home() {
           preview={preview}
           weather={weather}
           forecast={forecast}
+          isPreset
           onRefresh={refresh}
           onAddOfflineWorkout={handleAddOfflineWorkout}
         />
@@ -251,6 +252,8 @@ export default function Home() {
           mathiasEvents={customEvents}
           karolineActivities={[]}
           karolineEvents={[]}
+          customName={config.name}
+          customColor="#7c3aed"
           preview={preview}
           weather={weather}
           forecast={forecast}

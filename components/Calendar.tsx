@@ -52,6 +52,9 @@ export interface CalendarProps {
   preview?: { workout: WorkoutEvent; athleteSlug: 'mathias' | 'karoline' } | null;
   weather?: WeatherData | null;
   forecast?: WeatherForecast;
+  isPreset?: boolean;
+  customName?: string;
+  customColor?: string;
   onRefresh: () => void;
   onAddOfflineWorkout: (athleteSlug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
 }
@@ -460,7 +463,8 @@ const BIRTHDAYS: { month: number; day: number; name: string; color: string }[] =
   { month: 7, day: 20, name: 'Mathias', color: '#16a34a' },
 ];
 
-function getBirthday(date: Date): { name: string; color: string } | null {
+function getBirthday(date: Date, isPreset: boolean): { name: string; color: string } | null {
+  if (!isPreset) return null;
   const m = date.getMonth() + 1;
   const d = date.getDate();
   return BIRTHDAYS.find((b) => b.month === m && b.day === d) ?? null;
@@ -634,14 +638,14 @@ function symbolToEmoji(symbol: string): string {
   return '🌡️';
 }
 
-function DayCol({ date, chips, color, isWeekStart, weather, showWeather, onRefresh }: {
+function DayCol({ date, chips, color, isWeekStart, weather, showWeather, isPreset, onRefresh }: {
   date: Date; chips: WorkoutChip[]; color: string; isWeekStart: boolean;
-  weather?: WeatherData | null; showWeather?: boolean; onRefresh: () => void;
+  weather?: WeatherData | null; showWeather?: boolean; isPreset?: boolean; onRefresh: () => void;
 }) {
   const today = isToday(date);
   const past = isBefore(date, startOfDay(new Date())) && !today;
   const dayOfWeek = (date.getDay() + 6) % 7;
-  const birthday = getBirthday(date);
+  const birthday = getBirthday(date, isPreset ?? false);
   const [dragOver, setDragOver] = useState(false);
   const [moving, setMoving] = useState(false);
   const slots = Array.from({ length: Math.max(SLOTS, chips.length) });
@@ -785,12 +789,12 @@ function DayCol({ date, chips, color, isWeekStart, weather, showWeather, onRefre
 
 // ─── Athlete row ──────────────────────────────────────────────────────────────
 
-function AthleteRow({ name, color, days, activities, events, previewEvent, borderBottom, forecast, showWeatherRow, onRefresh, athleteSlug }: {
+function AthleteRow({ name, color, days, activities, events, previewEvent, borderBottom, forecast, showWeatherRow, isPreset, onRefresh, athleteSlug }: {
   name: string; color: string; days: Date[];
   activities: Activity[]; events: WorkoutEvent[];
   previewEvent?: WorkoutEvent | null; borderBottom?: boolean;
   forecast?: WeatherForecast;
-  showWeatherRow?: boolean;
+  showWeatherRow?: boolean; isPreset?: boolean;
   onRefresh: () => void; athleteSlug: 'mathias' | 'karoline';
 }) {
   return (
@@ -818,6 +822,7 @@ function AthleteRow({ name, color, days, activities, events, previewEvent, borde
               isWeekStart={dow === 0 && i > 0}
               weather={dayWeather}
               showWeather={showWeatherRow && !past}
+              isPreset={isPreset}
               onRefresh={onRefresh}
             />
           );
@@ -831,9 +836,10 @@ function AthleteRow({ name, color, days, activities, events, previewEvent, borde
 
 const OFFLINE_COLOR = '#2d3a2e';
 
-function OfflineCell({ date, onAdd }: {
+function OfflineCell({ date, onAdd, isPreset }: {
   date: Date;
   onAdd: (slug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
+  isPreset: boolean;
 }) {
   const workout = getOfflineWorkout(date);
   const [hovered, setHovered] = useState(false);
@@ -953,7 +959,15 @@ function OfflineCell({ date, onAdd }: {
           {(['add', 'replace'] as const).map((action) => (
             <button
               key={action}
-              onClick={() => setStep(action)}
+              onClick={async () => {
+                if (!isPreset) {
+                  // Custom mode: skip person picker, add directly
+                  setLoading(true);
+                  try { await onAdd('mathias', workout!, dateStr, action === 'replace'); } finally { setLoading(false); }
+                } else {
+                  setStep(action);
+                }
+              }}
               style={{
                 width: '100%', fontSize: 9, padding: '4px 0', borderRadius: 0, cursor: 'pointer',
                 backgroundImage: hatchUrl,
@@ -968,7 +982,7 @@ function OfflineCell({ date, onAdd }: {
       )}
 
       {/* Person picker — two big round buttons filling full width, no label */}
-      {step && (
+      {step && isPreset && (
         <div style={{ display: 'flex', gap: 4, flex: '0 0 auto', marginTop: 4 }}>
           {(['mathias', 'karoline'] as const).map((slug) => {
             const c = slug === 'mathias' ? '#16a34a' : '#2563eb';
@@ -998,9 +1012,10 @@ function OfflineCell({ date, onAdd }: {
   );
 }
 
-function OfflineRow({ days, onAdd }: {
+function OfflineRow({ days, onAdd, isPreset }: {
   days: Date[];
   onAdd: (slug: 'mathias' | 'karoline', workout: OfflineWorkout, date: string, replace: boolean) => Promise<void>;
+  isPreset: boolean;
 }) {
   return (
     <div className="flex">
@@ -1028,7 +1043,7 @@ function OfflineRow({ days, onAdd }: {
       </div>
       <div className="grid flex-1" style={{ gridTemplateColumns: 'repeat(14, minmax(72px, 1fr))' }}>
         {days.map((date, i) => (
-          <OfflineCell key={i} date={date} onAdd={onAdd} />
+          <OfflineCell key={i} date={date} onAdd={onAdd} isPreset={isPreset} />
         ))}
       </div>
     </div>
@@ -1037,7 +1052,7 @@ function OfflineRow({ days, onAdd }: {
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 
-export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, forecast, onRefresh, onAddOfflineWorkout }: CalendarProps) {
+export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities, karolineEvents, preview, forecast, isPreset, customName, customColor, onRefresh, onAddOfflineWorkout }: CalendarProps) {
   const days = buildDays();
   const mathiasPreview = preview?.athleteSlug === 'mathias' ? preview.workout : null;
   const karolinePreview = preview?.athleteSlug === 'karoline' ? preview.workout : null;
@@ -1049,13 +1064,32 @@ export function Calendar({ mathiasActivities, mathiasEvents, karolineActivities,
       </div>
       <div className="overflow-x-auto">
         <div style={{ minWidth: 1050 }}>
-          <AthleteRow name="Mathias" athleteSlug="mathias" color="#16a34a" days={days}
-            activities={mathiasActivities} events={mathiasEvents} previewEvent={mathiasPreview}
-            borderBottom forecast={forecast} showWeatherRow onRefresh={onRefresh} />
-          <AthleteRow name="Karoline" athleteSlug="karoline" color="#2563eb" days={days}
-            activities={karolineActivities} events={karolineEvents} previewEvent={karolinePreview}
-            borderBottom forecast={forecast} showWeatherRow onRefresh={onRefresh} />
-          <OfflineRow days={days} onAdd={onAddOfflineWorkout} />
+          {isPreset ? (
+            <>
+              <AthleteRow name="Mathias" athleteSlug="mathias" color="#16a34a" days={days}
+                activities={mathiasActivities} events={mathiasEvents} previewEvent={mathiasPreview}
+                borderBottom forecast={forecast} showWeatherRow isPreset onRefresh={onRefresh} />
+              <AthleteRow name="Karoline" athleteSlug="karoline" color="#2563eb" days={days}
+                activities={karolineActivities} events={karolineEvents} previewEvent={karolinePreview}
+                borderBottom forecast={forecast} showWeatherRow isPreset onRefresh={onRefresh} />
+            </>
+          ) : (
+            <AthleteRow
+              name={customName ?? 'Utøver'}
+              color={customColor ?? '#7c3aed'}
+              athleteSlug="mathias"
+              days={days}
+              activities={mathiasActivities}
+              events={mathiasEvents}
+              previewEvent={mathiasPreview}
+              borderBottom
+              forecast={forecast}
+              showWeatherRow
+              isPreset={false}
+              onRefresh={onRefresh}
+            />
+          )}
+          <OfflineRow days={days} onAdd={onAddOfflineWorkout} isPreset={isPreset ?? false} />
         </div>
       </div>
     </div>
